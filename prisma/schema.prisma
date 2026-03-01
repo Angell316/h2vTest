@@ -1,0 +1,130 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Пользователь ──────────────────────────────────────────────────────────────
+model User {
+  id           String    @id @default(cuid())
+  nickname     String    @unique
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  avatar       String?
+  bio          String?
+  lastOnline   DateTime? @map("last_online")
+  isOnline     Boolean   @default(false) @map("is_online")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  refreshTokens RefreshToken[]
+  chatMembers   ChatMember[]
+  sentMessages  Message[]      @relation("SentMessages")
+  readReceipts  ReadReceipt[]
+
+  @@map("users")
+}
+
+// ─── Refresh-токены ─────────────────────────────────────────────────────────────
+model RefreshToken {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String   @map("user_id")
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("refresh_tokens")
+}
+
+// ─── Чат ────────────────────────────────────────────────────────────────────────
+model Chat {
+  id          String   @id @default(cuid())
+  type        ChatType @default(DIRECT)
+  name        String?
+  avatar      String?
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  members  ChatMember[]
+  messages Message[]
+
+  @@map("chats")
+}
+
+enum ChatType {
+  DIRECT
+  GROUP
+}
+
+// ─── Участник чата ──────────────────────────────────────────────────────────────
+model ChatMember {
+  id       String         @id @default(cuid())
+  chatId   String         @map("chat_id")
+  userId   String         @map("user_id")
+  role     ChatMemberRole @default(MEMBER)
+  joinedAt DateTime       @default(now()) @map("joined_at")
+
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, userId])
+  @@map("chat_members")
+}
+
+enum ChatMemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+// ─── Сообщение ──────────────────────────────────────────────────────────────────
+model Message {
+  id         String      @id @default(cuid())
+  chatId     String      @map("chat_id")
+  senderId   String      @map("sender_id")
+  text       String?
+  type       MessageType @default(TEXT)
+  mediaUrl   String?     @map("media_url")
+  replyToId  String?     @map("reply_to_id")
+  isEdited   Boolean     @default(false) @map("is_edited")
+  isDeleted  Boolean     @default(false) @map("is_deleted")
+  createdAt  DateTime    @default(now()) @map("created_at")
+  updatedAt  DateTime    @updatedAt @map("updated_at")
+
+  chat        Chat          @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  sender      User          @relation("SentMessages", fields: [senderId], references: [id])
+  replyTo     Message?      @relation("ReplyTo", fields: [replyToId], references: [id])
+  replies     Message[]     @relation("ReplyTo")
+  readReceipts ReadReceipt[]
+
+  @@map("messages")
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  AUDIO
+  VIDEO
+  SYSTEM
+}
+
+// ─── Прочитанность ──────────────────────────────────────────────────────────────
+model ReadReceipt {
+  id        String   @id @default(cuid())
+  messageId String   @map("message_id")
+  userId    String   @map("user_id")
+  readAt    DateTime @default(now()) @map("read_at")
+
+  message Message @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, userId])
+  @@map("read_receipts")
+}
