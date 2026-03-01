@@ -903,7 +903,8 @@ async function openChat(chatId) {
     return;
   }
 
-  const msgs = (res.data || []).reverse();
+  const payload = res.data || {};
+  const msgs = (payload.messages || payload || []).reverse();
   container.innerHTML = '';
   for (const m of msgs) {
     await appendMessage(m);
@@ -1056,7 +1057,8 @@ async function runMsgSearch(chatId) {
   const q = document.getElementById('msg-search-input')?.value.trim();
   if (!q) return;
   const res = await api('GET', `/api/chats/${chatId}/messages?q=${encodeURIComponent(q)}&limit=50`);
-  const msgs = (res?.data || []).reverse();
+  const payload = res?.data || {};
+  const msgs = (payload.messages || payload || []).reverse();
   const container = document.getElementById('cw-messages');
   container.innerHTML = `<div class="search-results-header">Результаты поиска: «${escHtml(q)}» (${msgs.length})</div>`;
   for (const m of msgs) await appendMessage(m);
