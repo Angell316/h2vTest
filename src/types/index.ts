@@ -66,10 +66,13 @@ export type WsServerEventType =
   | 'message:delivered'
   | 'message:read'
   | 'message:deleted'
+  | 'reaction:added'
+  | 'reaction:removed'
   | 'typing:started'
   | 'typing:stopped'
   | 'user:online'
   | 'user:offline'
+  | 'presence:snapshot'
   | 'error';
 
 export interface WsServerEvent<T = unknown> {

@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { AuthRequest } from '../../types';
 import * as messageService from './message.service';
 import { ok, fail } from '../../utils/response';
+import { prisma } from '../../config/database';
+import { sendToUsers } from '../../websocket/ws.server';
 
 export async function getMessagesHandler(
   req: AuthRequest,
@@ -13,13 +15,15 @@ export async function getMessagesHandler(
     const schema = z.object({
       cursor: z.string().optional(),
       limit: z.coerce.number().min(1).max(100).default(50),
+      q: z.string().min(1).max(200).optional(),
     });
-    const { cursor, limit } = schema.parse(req.query);
+    const { cursor, limit, q } = schema.parse(req.query);
     const messages = await messageService.getChatMessages(
       String(req.params.chatId),
       req.user!.sub,
       cursor,
       limit,
+      q,
     );
     ok(res, messages);
   } catch (err) {
@@ -31,13 +35,80 @@ export async function getMessagesHandler(
   }
 }
 
+export async function addReactionHandler(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { emoji } = z.object({ emoji: z.string().min(1) }).parse(req.body);
+    const { reaction, chatId } = await messageService.addReaction(
+      String(req.params.id),
+      req.user!.sub,
+      emoji,
+    );
+    const members = await prisma.chatMember.findMany({ where: { chatId }, select: { userId: true } });
+    sendToUsers(
+      members.map((m) => m.userId),
+      { event: 'reaction:added', payload: { reaction, chatId } },
+    );
+    ok(res, reaction, 201);
+  } catch (err) {
+    if (err instanceof Error && (err.message === 'Not a member of this chat' || err.message === 'Invalid emoji')) {
+      fail(res, err.message, 400);
+    } else {
+      next(err);
+    }
+  }
+}
+
+export async function removeReactionHandler(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const emoji = decodeURIComponent(String(req.params.emoji));
+    const { chatId } = await messageService.removeReaction(
+      String(req.params.id),
+      req.user!.sub,
+      emoji,
+    );
+    const members = await prisma.chatMember.findMany({ where: { chatId }, select: { userId: true } });
+    sendToUsers(
+      members.map((m) => m.userId),
+      {
+        event: 'reaction:removed',
+        payload: { messageId: String(req.params.id), userId: req.user!.sub, emoji, chatId },
+      },
+    );
+    ok(res, { message: 'Removed' });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function deleteMessageHandler(
   req: AuthRequest,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    await messageService.deleteMessage(String(req.params.id), req.user!.sub);
+    const { id, chatId } = await messageService.deleteMessage(
+      String(req.params.id),
+      req.user!.sub,
+    );
+
+    // Уведомить всех участников чата о удалении сообщения
+    const members = await prisma.chatMember.findMany({
+      where: { chatId },
+      select: { userId: true },
+    });
+    sendToUsers(
+      members.map((m) => m.userId),
+      { event: 'message:deleted', payload: { messageId: id, chatId } },
+    );
+
     ok(res, { message: 'Deleted' });
   } catch (err) {
     if (err instanceof Error && err.message === 'Forbidden') {

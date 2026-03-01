@@ -19,6 +19,19 @@ const MESSAGE_SELECT = {
   readReceipts: {
     select: { userId: true, readAt: true },
   },
+  reactions: {
+    select: { id: true, userId: true, emoji: true },
+  },
+  replyTo: {
+    select: {
+      id: true,
+      text: true,
+      ciphertext: true,
+      signalType: true,
+      isDeleted: true,
+      sender: { select: { id: true, nickname: true } },
+    },
+  },
 };
 
 // ─── Отправить сообщение ──────────────────────────────────────────────────────
@@ -67,6 +80,7 @@ export async function getChatMessages(
   userId: string,
   cursor?: string,
   limit = 50,
+  query?: string,
 ) {
   const isMember = await prisma.chatMember.findFirst({
     where: { chatId, userId },
@@ -75,17 +89,46 @@ export async function getChatMessages(
   if (!isMember) throw new Error('Not a member of this chat');
 
   return prisma.message.findMany({
-    where: { chatId, isDeleted: false },
+    where: {
+      chatId,
+      isDeleted: false,
+      ...(query ? { text: { contains: query, mode: 'insensitive' } } : {}),
+    },
     select: MESSAGE_SELECT,
     orderBy: { createdAt: 'desc' },
     take: limit,
-    ...(cursor
-      ? {
-          skip: 1,
-          cursor: { id: cursor },
-        }
-      : {}),
+    ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
   });
+}
+
+// ─── Добавить реакцию ─────────────────────────────────────────────────────────
+export async function addReaction(messageId: string, userId: string, emoji: string) {
+  const ALLOWED = ['👍', '❤️', '😂', '😮', '😢', '🔥'];
+  if (!ALLOWED.includes(emoji)) throw new Error('Invalid emoji');
+
+  const msg = await prisma.message.findUnique({ where: { id: messageId }, select: { chatId: true } });
+  if (!msg) throw new Error('Message not found');
+
+  const isMember = await prisma.chatMember.findFirst({ where: { chatId: msg.chatId, userId } });
+  if (!isMember) throw new Error('Not a member of this chat');
+
+  const reaction = await prisma.reaction.upsert({
+    where: { messageId_userId_emoji: { messageId, userId, emoji } },
+    create: { messageId, userId, emoji },
+    update: {},
+    select: { id: true, messageId: true, userId: true, emoji: true },
+  });
+
+  return { reaction, chatId: msg.chatId };
+}
+
+// ─── Убрать реакцию ──────────────────────────────────────────────────────────
+export async function removeReaction(messageId: string, userId: string, emoji: string) {
+  const msg = await prisma.message.findUnique({ where: { id: messageId }, select: { chatId: true } });
+  if (!msg) throw new Error('Message not found');
+
+  await prisma.reaction.deleteMany({ where: { messageId, userId, emoji } });
+  return { chatId: msg.chatId };
 }
 
 // ─── Отметить как прочитанное ─────────────────────────────────────────────────
@@ -104,10 +147,12 @@ export async function deleteMessage(messageId: string, userId: string) {
   if (!msg) throw new Error('Message not found');
   if (msg.senderId !== userId) throw new Error('Forbidden');
 
-  return prisma.message.update({
+  await prisma.message.update({
     where: { id: messageId },
-    data: { isDeleted: true, text: null },
+    data: { isDeleted: true, text: null, ciphertext: null },
   });
+
+  return { id: messageId, chatId: msg.chatId };
 }
 
 // ─── Редактировать сообщение ──────────────────────────────────────────────────

@@ -11,6 +11,7 @@ export async function createDirectChat(
   initiatorId: string,
   targetUserId: string,
 ) {
+  if (initiatorId === targetUserId) throw new Error('Cannot create chat with yourself');
   // Проверить существующий direct-чат между двумя пользователями
   const existing = await prisma.chat.findFirst({
     where: {
@@ -62,9 +63,13 @@ export async function createGroupChat(
   });
 }
 
-// ─── Список чатов пользователя ───────────────────────────────────────────────
-export async function getUserChats(userId: string) {
-  return prisma.chat.findMany({
+// ─── Список чатов пользователя (cursor pagination) ───────────────────────────
+export async function getUserChats(
+  userId: string,
+  cursor?: string,
+  limit = 30,
+) {
+  const chats = await prisma.chat.findMany({
     where: { members: { some: { userId } } },
     include: {
       members: { include: MEMBER_INCLUDE },
@@ -74,6 +79,8 @@ export async function getUserChats(userId: string) {
         select: {
           id: true,
           text: true,
+          ciphertext: true,
+          signalType: true,
           type: true,
           createdAt: true,
           sender: { select: { id: true, nickname: true } },
@@ -81,7 +88,12 @@ export async function getUserChats(userId: string) {
       },
     },
     orderBy: { updatedAt: 'desc' },
+    take: limit,
+    ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
   });
+
+  const nextCursor = chats.length === limit ? chats[chats.length - 1].id : null;
+  return { chats, nextCursor };
 }
 
 // ─── Получить чат по ID (с проверкой членства) ───────────────────────────────

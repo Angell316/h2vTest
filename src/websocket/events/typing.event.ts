@@ -7,8 +7,6 @@ export async function handleTypingStart(
   userId: string,
   chatId: string,
 ): Promise<void> {
-  await presenceService.setTyping(chatId, userId);
-
   const members = await prisma.chatMember.findMany({
     where: { chatId },
     select: { userId: true },
@@ -16,7 +14,11 @@ export async function handleTypingStart(
 
   const memberIds = members.map((m) => m.userId);
 
-  // Уведомить остальных участников (не себя)
+  // Проверка членства — игнорируем событие если юзер не в чате
+  if (!memberIds.includes(userId)) return;
+
+  await presenceService.setTyping(chatId, userId);
+
   sendToUsers(memberIds, {
     event: 'typing:started',
     payload: { chatId, userId },
@@ -28,14 +30,17 @@ export async function handleTypingStop(
   userId: string,
   chatId: string,
 ): Promise<void> {
-  await presenceService.clearTyping(chatId, userId);
-
   const members = await prisma.chatMember.findMany({
     where: { chatId },
     select: { userId: true },
   });
 
   const memberIds = members.map((m) => m.userId);
+
+  // Проверка членства — игнорируем событие если юзер не в чате
+  if (!memberIds.includes(userId)) return;
+
+  await presenceService.clearTyping(chatId, userId);
 
   sendToUsers(memberIds, {
     event: 'typing:stopped',

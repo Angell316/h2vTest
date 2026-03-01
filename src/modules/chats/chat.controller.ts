@@ -10,8 +10,13 @@ export async function getMyChatsHandler(
   next: NextFunction,
 ): Promise<void> {
   try {
-    const chats = await chatService.getUserChats(req.user!.sub);
-    ok(res, chats);
+    const schema = z.object({
+      cursor: z.string().optional(),
+      limit: z.coerce.number().min(1).max(100).default(30),
+    });
+    const { cursor, limit } = schema.parse(req.query);
+    const result = await chatService.getUserChats(req.user!.sub, cursor, limit);
+    ok(res, result);
   } catch (err) {
     next(err);
   }

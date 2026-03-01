@@ -11,6 +11,9 @@ interface UploadBundleInput {
 }
 
 export async function uploadBundle(input: UploadBundleInput) {
+  // Delete old OTP keys so they don't conflict with new identity
+  await prisma.oneTimePreKey.deleteMany({ where: { userId: input.userId } });
+
   await prisma.preKeyBundle.upsert({
     where: { userId: input.userId },
     create: {
@@ -48,15 +51,18 @@ export async function fetchBundle(targetUserId: string) {
 
   if (!bundle) return null;
 
-  // Grab one OTP key and atomically delete it
-  const otpKey = await prisma.oneTimePreKey.findFirst({
-    where: { userId: targetUserId },
-    orderBy: { keyId: 'asc' },
+  // Atomically select and delete one OTP key inside a transaction
+  // to prevent race conditions when multiple clients fetch simultaneously
+  const otpKey = await prisma.$transaction(async (tx) => {
+    const key = await tx.oneTimePreKey.findFirst({
+      where: { userId: targetUserId },
+      orderBy: { keyId: 'asc' },
+    });
+    if (key) {
+      await tx.oneTimePreKey.delete({ where: { id: key.id } });
+    }
+    return key;
   });
-
-  if (otpKey) {
-    await prisma.oneTimePreKey.delete({ where: { id: otpKey.id } });
-  }
 
   return {
     registrationId: bundle.registrationId,
@@ -83,4 +89,13 @@ export async function replenishPreKeys(
 
 export async function getPreKeyCount(userId: string): Promise<number> {
   return prisma.oneTimePreKey.count({ where: { userId } });
+}
+
+// Lightweight check — does not consume any OTP prekey
+export async function hasBundle(userId: string): Promise<boolean> {
+  const bundle = await prisma.preKeyBundle.findUnique({
+    where: { userId },
+    select: { userId: true },
+  });
+  return !!bundle;
 }

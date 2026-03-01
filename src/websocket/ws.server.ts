@@ -50,6 +50,13 @@ export function createWsServer(httpServer: Server): WebSocketServer {
       where: { id: userId },
       data: { isOnline: true },
     }).catch(() => {});
+
+    // Сообщить новому клиенту кто уже онлайн (кроме него самого)
+    const alreadyOnline = Array.from(userSockets.keys()).filter(id => id !== userId);
+    if (alreadyOnline.length > 0) {
+      sendToSocket(ws, { event: 'presence:snapshot', payload: { onlineUserIds: alreadyOnline } });
+    }
+
     broadcastPresence(userId, 'user:online', null);
 
     console.log(`[WS] Connected: ${nickname} (${userId})`);

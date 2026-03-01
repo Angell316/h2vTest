@@ -87,6 +87,20 @@ export async function replenishHandler(
   }
 }
 
+export async function hasBundleHandler(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const targetUserId = String(req.params.userId);
+    const has = await keysService.hasBundle(targetUserId);
+    ok(res, { hasBundle: has });
+  } catch (err) {
+    next(err);
+  }
+}
+
 export async function preKeyCountHandler(
   req: AuthRequest,
   res: Response,
