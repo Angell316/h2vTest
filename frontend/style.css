@@ -309,3 +309,206 @@ body {
   margin-left: 4px;
   opacity: .6;
 }
+
+/* ─── Header search button ───────────────────────────────────────── */
+.header-icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  transition: background .15s, color .15s;
+}
+.header-icon-btn:hover { background: var(--hover); color: var(--text); }
+
+/* ─── Attach button ───────────────────────────────────────────────── */
+.attach-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  transition: background .15s, color .15s;
+}
+.attach-btn:hover { background: var(--hover); color: var(--accent); }
+
+/* ─── Reply bar in form ───────────────────────────────────────────── */
+.reply-bar, .edit-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: var(--hover);
+  border-left: 3px solid var(--accent);
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+.reply-bar button, .edit-bar button {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-secondary); font-size: 14px; padding: 0 4px;
+}
+
+/* ─── Reply preview inside bubble ────────────────────────────────── */
+.msg-reply-preview {
+  background: rgba(0,0,0,.12);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 3px 7px;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.reply-nick { font-weight: 600; color: var(--accent); margin-right: 4px; }
+
+/* ─── Media in messages ───────────────────────────────────────────── */
+.msg-media-img {
+  max-width: 240px; max-height: 240px;
+  border-radius: 8px; display: block;
+  margin-top: 6px; cursor: pointer;
+  object-fit: cover;
+}
+.msg-media-video {
+  max-width: 240px; border-radius: 8px;
+  display: block; margin-top: 6px;
+}
+.msg-media-audio {
+  display: block; margin-top: 6px;
+  max-width: 240px; width: 100%;
+}
+.msg-media-file {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-top: 6px; padding: 6px 10px;
+  background: rgba(0,0,0,.15); border-radius: 8px;
+  color: var(--text); text-decoration: none; font-size: 13px;
+}
+.msg-media-file:hover { background: rgba(0,0,0,.25); }
+
+/* ─── Reactions bar ───────────────────────────────────────────────── */
+.msg-react-bar {
+  display: flex; flex-wrap: wrap; gap: 4px;
+  margin: 2px 0 0 0; min-height: 0;
+}
+.react-chip {
+  background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1px 7px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s;
+}
+.react-chip.active {
+  background: rgba(108,99,255,.2);
+  border-color: var(--accent);
+}
+.react-chip:hover { background: var(--border); }
+.react-add-btn {
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  padding: 1px 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color .15s;
+}
+.react-add-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ─── Emoji picker popup ──────────────────────────────────────────── */
+.emoji-picker-popup {
+  position: fixed;
+  z-index: 999;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  display: flex; gap: 4px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.3);
+}
+.emoji-picker-popup button {
+  background: none; border: none;
+  font-size: 22px; cursor: pointer;
+  border-radius: 8px; padding: 4px;
+  transition: background .1s;
+}
+.emoji-picker-popup button:hover { background: var(--hover); }
+
+/* ─── Context menu ────────────────────────────────────────────────── */
+.msg-ctx-menu {
+  position: fixed;
+  z-index: 999;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.3);
+  display: flex; flex-direction: column;
+  min-width: 150px; overflow: hidden;
+}
+.msg-ctx-menu button {
+  background: none; border: none;
+  text-align: left; padding: 10px 14px;
+  font-size: 13px; color: var(--text);
+  cursor: pointer; transition: background .1s;
+}
+.msg-ctx-menu button:hover { background: var(--hover); }
+
+/* ─── Message search bar ──────────────────────────────────────────── */
+.msg-search-bar {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.msg-search-bar input {
+  flex: 1; background: var(--hover);
+  border: 1px solid var(--border);
+  border-radius: 8px; padding: 6px 10px;
+  color: var(--text); font-size: 13px;
+}
+.msg-search-bar button {
+  background: none; border: none;
+  color: var(--text-secondary); cursor: pointer;
+  font-size: 16px; padding: 4px;
+  border-radius: 6px; transition: background .1s;
+}
+.msg-search-bar button:hover { background: var(--hover); }
+.search-results-header {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ─── Load more chats button ─────────────────────────────────────── */
+.load-more-wrap {
+  padding: 8px 12px;
+  text-align: center;
+}
+.load-more-btn {
+  width: 100%;
+  padding: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .15s;
+}
+.load-more-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}

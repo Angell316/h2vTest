@@ -141,3 +141,10 @@
 | 0.2.0 | 01.03.2026 | Фронтенд: SPA на ванильном JS (auth, чаты, WS, typing, presence) |
 | 0.3.0 | 01.03.2026 | Realtime: unread badges, typing animation, checkmarks, sounds, reconnect |
 | 0.4.0 | 01.03.2026 | Signal Protocol E2E: X3DH + Double Ratchet, шифрование всех direct-сообщений |
+| 0.4.1 | 01.03.2026 | Fix: регистрация не блокируется ошибками E2E key init |
+| 0.4.2 | 01.03.2026 | Fix: расшифрованные сообщения видны после перезагрузки (localStorage cache для отправителя и получателя, сохранение кэша при logout/reset) |
+| 0.5.0 | 01.03.2026 | Security & Reliability Block 1: rate limiting (auth 20/15мин, api 300/мин), race condition OTP ($transaction), message:deleted WS broadcast, ciphertext очищается при удалении, JWT падает без .env секретов, typing проверяет членство в чате, Prisma ошибки не раскрываются клиенту, лимит JSON тела 2mb |
+| 0.5.1 | 01.03.2026 | Performance Block 2: 4 индекса в БД (messages.chatId+createdAt, messages.senderId, chat_members.userId, one_time_prekeys.userId+keyId, refresh_tokens.userId), cursor-based pagination для /api/chats (limit=30), кнопка "Загрузить ещё" в сайдбаре |
+| 0.6.0 | 01.03.2026 | Features Block 3: реакции на сообщения (таблица reactions, API + WS real-time), загрузка файлов/медиа (multer, POST /api/upload, кнопка в чате), поиск по сообщениям (?q=), reply с объектом оригинала в API, контекстное меню сообщений (reply/edit/delete/copy), кнопка поиска в хедере чата |
+| 0.6.1 | 01.03.2026 | Fix E2E + presence: лёгкий endpoint GET /api/keys/has-bundle/:userId (не тратит OTP prekeys), presence:snapshot при WS-коннекте (снимок онлайн-пользователей), автопополнение prekeys при остатке <20, trust proxy для rate limiter |
+| 0.6.2 | 01.03.2026 | Документация: создан API.md — полная документация всех REST эндпоинтов, WebSocket событий, схемы БД с примерами запросов и ответов |

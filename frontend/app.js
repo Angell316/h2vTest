@@ -18,175 +18,257 @@ const WS_URL = `${WS_PROTO}//${window.location.host}/ws`;
 
 /* ─── State ──────────────────────────────────────────────────────── */
 const state = {
-  accessToken:  localStorage.getItem('accessToken') || null,
-  refreshToken: localStorage.getItem('refreshToken') || null,
-  me:           JSON.parse(localStorage.getItem('me') || 'null'),
-  chats:        [],
-  activeChatId: null,
-  onlineUsers:  new Set(),
-  ws:           null,
-  wsHeartbeat:  null,
-  typingTimers: {},
-  unread:       {},
-  signalStore:  null,
+  accessToken:     localStorage.getItem('accessToken') || null,
+  refreshToken:    localStorage.getItem('refreshToken') || null,
+  me:              JSON.parse(localStorage.getItem('me') || 'null'),
+  chats:           [],
+  nextChatCursor:  null,
+  activeChatId:    null,
+  onlineUsers:     new Set(),
+  ws:              null,
+  wsHeartbeat:     null,
+  typingTimers:    {},
+  unread:          {},
+  signalStore:     null,
 };
 
 /* ════════════════════════════════════════════════════════════════════
    Signal Protocol E2E Encryption
    ════════════════════════════════════════════════════════════════════ */
-const { KeyHelper, SignalProtocolAddress, SessionBuilder, SessionCipher } = window.SignalLib || {};
-const { arrayBufferToBase64, base64ToArrayBuffer, textToArrayBuffer, arrayBufferToText } = window.SignalUtils || {};
+function _sl() { return window.SignalLib || {}; }
+function _su() { return window.SignalUtils || {}; }
 
 const PREKEY_COUNT = 100;
-const pendingPlaintext = {}; // chatId → last sent plaintext (for own message display)
+const pendingPlaintext = {};
 
+// ── Plaintext cache (sender sees own messages after reload) ──────────────────
+function savePlaintext(msgId, text) {
+  try {
+    const cache = JSON.parse(localStorage.getItem('e2e_pt') || '{}');
+    cache[msgId] = text;
+    const keys = Object.keys(cache);
+    if (keys.length > 500) { for (let i = 0; i < keys.length - 500; i++) delete cache[keys[i]]; }
+    localStorage.setItem('e2e_pt', JSON.stringify(cache));
+  } catch {}
+}
+function getPlaintext(msgId) {
+  try { return (JSON.parse(localStorage.getItem('e2e_pt') || '{}'))[msgId] || null; }
+  catch { return null; }
+}
+
+// ── Store ────────────────────────────────────────────────────────────────────
 function getSignalStore() {
-  if (!state.signalStore && state.me) {
+  if (!state.signalStore && state.me && window.SignalStore) {
     state.signalStore = new window.SignalStore(state.me.id);
   }
   return state.signalStore;
 }
 
-async function initSignalKeys() {
-  const store = getSignalStore();
-  if (!store) return;
-
-  if (await store.hasIdentityKeyPair()) {
-    console.log('[E2E] Keys already exist');
-    return;
-  }
-
-  console.log('[E2E] Generating identity keys...');
-  const identityKeyPair = await KeyHelper.generateIdentityKeyPair();
-  const registrationId = KeyHelper.generateRegistrationId();
-  const signedPreKey = await KeyHelper.generateSignedPreKey(identityKeyPair, 1);
-
-  await store.storeIdentityKeyPair(identityKeyPair);
-  await store.storeLocalRegistrationId(registrationId);
-  await store.storeSignedPreKey(1, signedPreKey.keyPair);
-
-  const preKeys = [];
-  for (let i = 1; i <= PREKEY_COUNT; i++) {
-    const pk = await KeyHelper.generatePreKey(i);
-    await store.storePreKey(i, pk.keyPair);
-    preKeys.push({
-      keyId: i,
-      publicKey: arrayBufferToBase64(pk.keyPair.pubKey),
-    });
-  }
-
-  await api('POST', '/api/keys/bundle', {
-    registrationId,
-    identityKey: arrayBufferToBase64(identityKeyPair.pubKey),
-    signedPreKeyId: signedPreKey.keyId,
-    signedPreKey: arrayBufferToBase64(signedPreKey.keyPair.pubKey),
-    signedPreKeySig: arrayBufferToBase64(signedPreKey.signature),
-    oneTimePreKeys: preKeys,
-  });
-
-  console.log('[E2E] Keys generated and uploaded');
+function isE2EAvailable() {
+  return !!(window.SignalLib && window.SignalStore && window.SignalUtils);
 }
 
 function getAddress(userId) {
-  return new SignalProtocolAddress(userId, 1);
+  return new (_sl().SignalProtocolAddress)(userId, 1);
 }
 
-async function hasSession(userId) {
-  const store = getSignalStore();
-  if (!store) return false;
-  const addr = getAddress(userId);
-  const record = await store.loadSession(addr.toString());
-  return !!record;
+// ── Reset: wipe local keys + tell server to reset OTP keys ──────────────────
+async function resetE2E() {
+  if (!state.me) return;
+  const dbName = `signal-store-${state.me.id}`;
+  try {
+    await new Promise((resolve, reject) => {
+      const req = indexedDB.deleteDatabase(dbName);
+      req.onsuccess = resolve;
+      req.onerror = reject;
+      req.onblocked = resolve;
+    });
+  } catch {}
+  // NOTE: e2e_pt (plaintext cache) is intentionally NOT cleared —
+  // so old decrypted messages remain readable after key reset
+  state.signalStore = null;
+  console.log('[E2E] Reset done, generating fresh keys...');
+  await initSignalKeys();
 }
 
-async function buildSession(partnerId) {
+// Called from window.load after signal-protocol.js finishes loading
+window.initE2EAfterLoad = function() {
+  if (!state.me || !state.accessToken || !isE2EAvailable()) return;
+  const E2E_VER = '4';
+  if (localStorage.getItem('e2e_version') !== E2E_VER) {
+    console.log('[E2E] Resetting to version', E2E_VER);
+    resetE2E()
+      .then(() => localStorage.setItem('e2e_version', E2E_VER))
+      .catch(err => console.error('[E2E] Reset error:', err));
+  } else {
+    initSignalKeys().catch(() => {});
+  }
+};
+
+// ── Auto-replenish OTP prekeys when running low ──────────────────────────────
+const PREKEY_MIN_THRESHOLD = 20; // пополнять если осталось меньше
+let replenishInProgress = false;
+
+async function checkAndReplenishPreKeys() {
+  if (replenishInProgress || !isE2EAvailable()) return;
+  try {
+    const res = await api('GET', '/api/keys/count');
+    if (!res?.success) return;
+    if (res.data.count >= PREKEY_MIN_THRESHOLD) return;
+
+    replenishInProgress = true;
+    const store = getSignalStore();
+    if (!store) return;
+
+    const KH = _sl().KeyHelper;
+    const ab2b64 = _su().arrayBufferToBase64;
+
+    // Генерируем от текущего макс. keyId + 1
+    const newKeys = [];
+    const startId = Date.now() % 100000; // уникальный стартовый ID
+    for (let i = 0; i < PREKEY_COUNT; i++) {
+      const pk = await KH.generatePreKey(startId + i);
+      await store.storePreKey(startId + i, pk.keyPair);
+      newKeys.push({ keyId: startId + i, publicKey: ab2b64(pk.keyPair.pubKey) });
+    }
+    await api('POST', '/api/keys/replenish', { preKeys: newKeys });
+    console.log(`[E2E] Replenished ${newKeys.length} prekeys`);
+  } catch (err) {
+    console.warn('[E2E] Replenish failed:', err);
+  } finally {
+    replenishInProgress = false;
+  }
+}
+
+// ── Key generation + upload ──────────────────────────────────────────────────
+async function initSignalKeys() {
+  const KH = _sl().KeyHelper;
+  if (!KH) { console.warn('[E2E] SignalLib not loaded yet'); return; }
+  const store = getSignalStore();
+  if (!store) return;
+
+  try {
+    if (await store.hasIdentityKeyPair()) { console.log('[E2E] Keys ready'); return; }
+
+    console.log('[E2E] Generating keys...');
+    const identityKeyPair = await KH.generateIdentityKeyPair();
+    const registrationId  = KH.generateRegistrationId();
+    const signedPreKey    = await KH.generateSignedPreKey(identityKeyPair, 1);
+
+    await store.storeIdentityKeyPair(identityKeyPair);
+    await store.storeLocalRegistrationId(registrationId);
+    await store.storeSignedPreKey(1, signedPreKey.keyPair);
+
+    const ab2b64 = _su().arrayBufferToBase64;
+    const preKeys = [];
+    for (let i = 1; i <= PREKEY_COUNT; i++) {
+      const pk = await KH.generatePreKey(i);
+      await store.storePreKey(i, pk.keyPair);
+      preKeys.push({ keyId: i, publicKey: ab2b64(pk.keyPair.pubKey) });
+    }
+
+    await api('POST', '/api/keys/bundle', {
+      registrationId,
+      identityKey:     ab2b64(identityKeyPair.pubKey),
+      signedPreKeyId:  signedPreKey.keyId,
+      signedPreKey:    ab2b64(signedPreKey.keyPair.pubKey),
+      signedPreKeySig: ab2b64(signedPreKey.signature),
+      oneTimePreKeys:  preKeys,
+    });
+    console.log('[E2E] Keys uploaded OK');
+  } catch (err) {
+    console.error('[E2E] initSignalKeys:', err);
+  }
+}
+
+// ── Session: only the SENDER builds it before first message ─────────────────
+async function ensureSession(partnerId) {
   const store = getSignalStore();
   if (!store) return false;
+
+  const addr = getAddress(partnerId);
+  const existing = await store.loadSession(addr.toString());
+  if (existing) return true;  // already have a session
 
   try {
     const res = await api('GET', `/api/keys/bundle/${partnerId}`);
-    if (!res?.success || !res.data) {
-      console.warn('[E2E] No bundle for', partnerId);
-      return false;
-    }
+    if (!res?.success || !res.data) { console.warn('[E2E] No bundle for', partnerId); return false; }
 
     const bundle = res.data;
-    const addr = getAddress(partnerId);
+    const b64ab  = _su().base64ToArrayBuffer;
 
-    const preKeyBundle = {
+    const pkBundle = {
       registrationId: bundle.registrationId,
-      identityKey: base64ToArrayBuffer(bundle.identityKey),
+      identityKey:    b64ab(bundle.identityKey),
       signedPreKey: {
-        keyId: bundle.signedPreKeyId,
-        publicKey: base64ToArrayBuffer(bundle.signedPreKey),
-        signature: base64ToArrayBuffer(bundle.signedPreKeySig),
+        keyId:     bundle.signedPreKeyId,
+        publicKey: b64ab(bundle.signedPreKey),
+        signature: b64ab(bundle.signedPreKeySig),
       },
     };
-
     if (bundle.preKey) {
-      preKeyBundle.preKey = {
-        keyId: bundle.preKey.keyId,
-        publicKey: base64ToArrayBuffer(bundle.preKey.publicKey),
-      };
+      pkBundle.preKey = { keyId: bundle.preKey.keyId, publicKey: b64ab(bundle.preKey.publicKey) };
     }
 
-    const builder = new SessionBuilder(store, addr);
-    await builder.processPreKey(preKeyBundle);
-    console.log('[E2E] Session built with', partnerId);
+    const builder = new (_sl().SessionBuilder)(store, addr);
+    await builder.processPreKey(pkBundle);
+    console.log('[E2E] Session established with', partnerId);
     return true;
   } catch (err) {
-    console.error('[E2E] Failed to build session:', err);
+    console.error('[E2E] ensureSession failed:', err);
     return false;
   }
 }
 
+// ── Encrypt ──────────────────────────────────────────────────────────────────
 async function encryptMessage(partnerId, plaintext) {
   const store = getSignalStore();
   if (!store) return null;
-
   try {
-    const addr = getAddress(partnerId);
-    const cipher = new SessionCipher(store, addr);
-    const encrypted = await cipher.encrypt(textToArrayBuffer(plaintext));
-    return {
-      ciphertext: arrayBufferToBase64(
-        typeof encrypted.body === 'string'
-          ? new TextEncoder().encode(encrypted.body).buffer
-          : encrypted.body
-      ),
-      signalType: encrypted.type,
-    };
+    const addr    = getAddress(partnerId);
+    const cipher  = new (_sl().SessionCipher)(store, addr);
+    const enc     = await cipher.encrypt(_su().textToArrayBuffer(plaintext));
+    // enc.body is always a binary string from this library
+    const ct = (typeof enc.body === 'string') ? btoa(enc.body) : _su().arrayBufferToBase64(enc.body);
+    return { ciphertext: ct, signalType: enc.type };
   } catch (err) {
-    console.error('[E2E] Encrypt failed:', err);
+    console.error('[E2E] encrypt:', err);
     return null;
   }
 }
 
+// ── Decrypt: try correct method, then fallback ───────────────────────────────
 async function decryptMessage(senderId, ciphertext, signalType) {
   const store = getSignalStore();
   if (!store) return null;
-
   try {
-    const addr = getAddress(senderId);
-    const cipher = new SessionCipher(store, addr);
-    const body = base64ToArrayBuffer(ciphertext);
+    const addr   = getAddress(senderId);
+    const cipher = new (_sl().SessionCipher)(store, addr);
+
+    // Convert base64 → binary string → ArrayBuffer
+    const binStr = atob(ciphertext);
+    const bytes  = new Uint8Array(binStr.length);
+    for (let i = 0; i < binStr.length; i++) bytes[i] = binStr.charCodeAt(i);
+    const body   = bytes.buffer;
+
+    // type 3 = PreKeyWhisperMessage (first message), type 1 = WhisperMessage
+    const tryPreKey   = () => cipher.decryptPreKeyWhisperMessage(body);
+    const tryWhisper  = () => cipher.decryptWhisperMessage(body);
 
     let plainBuf;
     if (signalType === 3) {
-      plainBuf = await cipher.decryptWhisperMessage(body);
+      try { plainBuf = await tryPreKey(); }
+      catch { plainBuf = await tryWhisper(); }
     } else {
-      plainBuf = await cipher.decryptPreKeyWhisperMessage(body);
+      try { plainBuf = await tryWhisper(); }
+      catch { plainBuf = await tryPreKey(); }
     }
 
-    return arrayBufferToText(plainBuf);
+    return _su().arrayBufferToText(plainBuf);
   } catch (err) {
-    console.error('[E2E] Decrypt failed:', err);
+    console.error('[E2E] decrypt:', err.message);
     return null;
   }
-}
-
-function isE2EAvailable() {
-  return !!(window.SignalLib && window.SignalStore && window.SignalUtils);
 }
 
 /* ─── API ────────────────────────────────────────────────────────── */
@@ -304,13 +386,79 @@ function showConnectionStatus(status) {
    ════════════════════════════════════════════════════════════════════ */
 function handleWsEvent({ event, payload }) {
   switch (event) {
-    case 'message:new':       onNewMessage(payload);      break;
+    case 'message:new':       onNewMessage(payload);       break;
     case 'message:delivered': onMessageDelivered(payload); break;
-    case 'message:read':      onMessageRead(payload);     break;
-    case 'typing:started':    onTypingStarted(payload);   break;
-    case 'typing:stopped':    onTypingStopped(payload);   break;
-    case 'user:online':       onUserOnline(payload);      break;
-    case 'user:offline':      onUserOffline(payload);     break;
+    case 'message:read':      onMessageRead(payload);      break;
+    case 'message:deleted':   onMessageDeleted(payload);   break;
+    case 'reaction:added':    onReactionAdded(payload);    break;
+    case 'reaction:removed':  onReactionRemoved(payload);  break;
+    case 'typing:started':    onTypingStarted(payload);    break;
+    case 'typing:stopped':    onTypingStopped(payload);    break;
+    case 'user:online':        onUserOnline(payload);         break;
+    case 'user:offline':       onUserOffline(payload);        break;
+    case 'presence:snapshot':  onPresenceSnapshot(payload);   break;
+  }
+}
+
+/* ─── reaction:added / removed ──────────────────────────────────── */
+function updateReactBar(messageId, updater) {
+  const group = document.querySelector(`[data-msg-id="${messageId}"]`);
+  if (!group) return;
+  const bar = group.querySelector('.msg-react-bar');
+  if (!bar) return;
+  // Rebuild reactions from current chips + update
+  const reactions = collectReactionsFromBar(bar);
+  updater(reactions);
+  renderReactions(bar, reactions, messageId);
+}
+
+function collectReactionsFromBar(bar) {
+  const chips = bar.querySelectorAll('.react-chip');
+  const reactions = [];
+  chips.forEach(chip => {
+    const parts = chip.textContent.trim().split(' ');
+    const emoji = parts[0]; const cnt = parseInt(parts[1]) || 1;
+    const isActive = chip.classList.contains('active');
+    for (let i = 0; i < cnt; i++) {
+      reactions.push({ emoji, userId: isActive && i === 0 ? state.me.id : '__other__' });
+    }
+  });
+  return reactions;
+}
+
+function onReactionAdded({ reaction, chatId }) {
+  if (state.activeChatId !== chatId) return;
+  updateReactBar(reaction.messageId, (reactions) => {
+    if (!reactions.find(r => r.userId === reaction.userId && r.emoji === reaction.emoji)) {
+      reactions.push(reaction);
+    }
+  });
+}
+
+function onReactionRemoved({ messageId, userId, emoji, chatId }) {
+  if (state.activeChatId !== chatId) return;
+  updateReactBar(messageId, (reactions) => {
+    const idx = reactions.findIndex(r => r.userId === userId && r.emoji === emoji);
+    if (idx !== -1) reactions.splice(idx, 1);
+  });
+}
+
+/* ─── message:deleted ────────────────────────────────────────────── */
+function onMessageDeleted({ messageId, chatId }) {
+  // Удаляем из DOM если чат открыт
+  if (state.activeChatId === chatId) {
+    const el = document.querySelector(`[data-msg-id="${messageId}"]`);
+    if (el) {
+      const textEl = el.querySelector('.msg-text');
+      if (textEl) textEl.textContent = '[удалено]';
+      el.classList.add('msg-deleted');
+    }
+  }
+  // Обновляем превью в сайдбаре если это последнее сообщение
+  const chat = state.chats.find(c => c.id === chatId);
+  if (chat && chat.lastMsg) {
+    chat.lastMsg = '[удалено]';
+    renderChatList();
   }
 }
 
@@ -330,16 +478,26 @@ async function onNewMessage(msg) {
     if (isMine && pendingPlaintext[msg.chatId]) {
       previewText = pendingPlaintext[msg.chatId];
       msg._decryptedText = previewText;
+      savePlaintext(msg.id, previewText);
       delete pendingPlaintext[msg.chatId];
     } else if (isMine) {
-      previewText = msg._decryptedText || '🔒 Зашифрованное сообщение';
+      const cached = getPlaintext(msg.id);
+      previewText = cached || msg._decryptedText || '🔒 Зашифрованное сообщение';
+      if (cached) msg._decryptedText = cached;
     } else if (isE2EAvailable() && msg.sender?.id) {
-      const dec = await decryptMessage(msg.sender.id, msg.ciphertext, msg.signalType);
-      if (dec) {
-        previewText = dec;
-        msg._decryptedText = dec;
+      const cached2 = getPlaintext(msg.id);
+      if (cached2) {
+        previewText = cached2;
+        msg._decryptedText = cached2;
       } else {
-        previewText = '🔒 Зашифрованное сообщение';
+        const dec = await decryptMessage(msg.sender.id, msg.ciphertext, msg.signalType);
+        if (dec) {
+          previewText = dec;
+          msg._decryptedText = dec;
+          savePlaintext(msg.id, dec);
+        } else {
+          previewText = '🔒 Зашифрованное сообщение';
+        }
       }
     } else {
       previewText = '🔒 Зашифрованное сообщение';
@@ -432,6 +590,16 @@ function onUserOffline({ userId, lastOnline }) {
   state.onlineUsers.delete(userId);
   if (lastOnline) lastOnlineCache[userId] = lastOnline;
   refreshPresenceUI(userId);
+}
+
+function onPresenceSnapshot({ onlineUserIds }) {
+  // Инициализируем онлайн-статус всех кто уже был в сети до нашего коннекта
+  for (const uid of onlineUserIds) {
+    state.onlineUsers.add(uid);
+  }
+  renderChatList();
+  const chat = state.chats.find(c => c.id === state.activeChatId);
+  if (chat) updateChatHeaderStatus(getPartnerUserId(chat));
 }
 
 function refreshPresenceUI(userId) {
@@ -534,9 +702,6 @@ async function finishAuth({ user, tokens }) {
   state.me = user;
   localStorage.setItem('me', JSON.stringify(user));
   state.signalStore = null;
-  if (isE2EAvailable()) {
-    await initSignalKeys();
-  }
   await bootApp();
 }
 
@@ -544,10 +709,16 @@ function logout() {
   api('POST', '/api/auth/logout', { refreshToken: state.refreshToken }).catch(() => {});
   clearInterval(state.wsHeartbeat);
   if (state.ws) { state.ws.onclose = null; state.ws.close(); }
+  // Preserve plaintext cache and e2e version across logout
+  const pt  = localStorage.getItem('e2e_pt');
+  const ver = localStorage.getItem('e2e_version');
   localStorage.clear();
+  if (pt)  localStorage.setItem('e2e_pt', pt);
+  if (ver) localStorage.setItem('e2e_version', ver);
   Object.assign(state, {
     accessToken: null, refreshToken: null, me: null,
     chats: [], activeChatId: null, ws: null, onlineUsers: new Set(), unread: {},
+    signalStore: null,
   });
   showScreen('auth');
 }
@@ -564,11 +735,6 @@ async function bootApp() {
   $av.textContent = state.me.nickname[0].toUpperCase();
   $av.className = `my-avatar av-${charColor(state.me.nickname[0])}`;
 
-  if (isE2EAvailable()) {
-    state.signalStore = null;
-    await initSignalKeys();
-  }
-
   await loadChats();
   connectWS();
 }
@@ -576,24 +742,39 @@ async function bootApp() {
 /* ════════════════════════════════════════════════════════════════════
    Chats
    ════════════════════════════════════════════════════════════════════ */
-async function loadChats() {
-  const res = await api('GET', '/api/chats');
+function mapChat(chat) {
+  const lastMsg = chat.messages?.[0];
+  let preview = lastMsg?.text || '';
+  if (lastMsg?.ciphertext && lastMsg?.signalType > 0) {
+    const cached = lastMsg.id ? getPlaintext(lastMsg.id) : null;
+    preview = cached || '🔒 Зашифрованное сообщение';
+  }
+  return {
+    ...chat,
+    lastMsg:        preview,
+    lastMsgTime:    lastMsg?.createdAt || chat.updatedAt,
+    lastSenderNick: lastMsg?.sender?.nickname || '',
+    _typing:        false,
+  };
+}
+
+async function loadChats(cursor = null, append = false) {
+  const url = '/api/chats?limit=30' + (cursor ? `&cursor=${cursor}` : '');
+  const res = await api('GET', url);
   if (!res?.success) return;
 
-  state.chats = res.data.map(chat => {
-    const lastMsg = chat.messages?.[0];
-    let preview = lastMsg?.text || '';
-    if (lastMsg?.ciphertext && lastMsg?.signalType > 0) {
-      preview = '🔒 Зашифрованное сообщение';
-    }
-    return {
-      ...chat,
-      lastMsg:        preview,
-      lastMsgTime:    lastMsg?.createdAt || chat.updatedAt,
-      lastSenderNick: lastMsg?.sender?.nickname || '',
-      _typing:        false,
-    };
-  });
+  // Новый формат: { chats: [...], nextCursor: string|null }
+  const rawChats = Array.isArray(res.data) ? res.data : (res.data.chats ?? []);
+  state.nextChatCursor = res.data?.nextCursor ?? null;
+
+  const mapped = rawChats.map(mapChat);
+  if (append) {
+    // Добавляем старые чаты в конец, не дублируя уже существующие
+    const existingIds = new Set(state.chats.map(c => c.id));
+    state.chats.push(...mapped.filter(c => !existingIds.has(c.id)));
+  } else {
+    state.chats = mapped;
+  }
 
   sortChats();
   renderChatList();
@@ -650,6 +831,16 @@ function renderChatList() {
         </div>
       </div>`;
   }).join('');
+
+  // Кнопка "Загрузить ещё" если есть следующая страница
+  if (state.nextChatCursor) {
+    el.insertAdjacentHTML('beforeend', `
+      <div class="load-more-wrap">
+        <button class="load-more-btn" onclick="loadChats('${state.nextChatCursor}', true)">
+          Загрузить ещё чаты
+        </button>
+      </div>`);
+  }
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -678,23 +869,41 @@ async function openChat(chatId) {
 
   updateChatHeaderStatus(partnerId);
 
-  // Build E2E session if needed (direct chats only)
-  let e2eReady = false;
+  // E2E: check if partner has keys — use lightweight endpoint that does NOT consume OTP prekeys
+  let partnerHasBundle = false;
   if (isE2EAvailable() && partnerId && chat?.type !== 'GROUP') {
-    if (await hasSession(partnerId)) {
-      e2eReady = true;
-    } else {
-      e2eReady = await buildSession(partnerId);
+    const store = getSignalStore();
+    if (store) {
+      // First check local session (free)
+      const existing = await store.loadSession(getAddress(partnerId).toString());
+      if (existing) {
+        partnerHasBundle = true;
+      } else {
+        // Lightweight server check — no OTP key consumed
+        const r = await api('GET', `/api/keys/has-bundle/${partnerId}`).catch(() => null);
+        partnerHasBundle = !!(r?.success && r?.data?.hasBundle);
+      }
     }
   }
 
   const e2eBadge = document.getElementById('cw-e2e');
-  if (e2eBadge) e2eBadge.style.display = e2eReady ? 'inline-flex' : 'none';
+  if (e2eBadge) e2eBadge.style.display = partnerHasBundle ? 'inline-flex' : 'none';
 
   // История
   const res = await api('GET', `/api/chats/${chatId}/messages?limit=50`);
-  const msgs = (res?.data || []).reverse();
   const container = document.getElementById('cw-messages');
+
+  if (!res?.success) {
+    container.innerHTML = `<div class="empty-state" style="color:var(--text-secondary);padding:24px">
+      Не удалось загрузить сообщения. Попробуй перезагрузить страницу.
+    </div>`;
+    // Убираем битый чат из списка
+    state.chats = state.chats.filter(c => c.id !== chatId);
+    renderChatList();
+    return;
+  }
+
+  const msgs = (res.data || []).reverse();
   container.innerHTML = '';
   for (const m of msgs) {
     await appendMessage(m);
@@ -702,28 +911,137 @@ async function openChat(chatId) {
   scrollToBottom();
 
   // Форма
-  const form  = document.getElementById('cw-form');
-  const input = document.getElementById('cw-input');
+  const form       = document.getElementById('cw-form');
+  const input      = document.getElementById('cw-input');
+  const fileBtn    = document.getElementById('cw-file-btn');
+  const fileInput  = document.getElementById('cw-file-input');
+  const searchBtn  = document.getElementById('cw-search-btn');
   let typingActive = false, typingTimer = null;
+  let replyToMsg   = null;  // текущий reply
 
+  // ── Reply: функции ────────────────────────────────────────────────
+  window.setReplyTo = (msg) => {
+    replyToMsg = msg;
+    let preview = form.querySelector('.reply-bar');
+    if (!preview) {
+      preview = document.createElement('div');
+      preview.className = 'reply-bar';
+      form.insertBefore(preview, form.firstChild);
+    }
+    const nick = msg.sender?.nickname || '';
+    const txt  = msg.text || (msg.ciphertext ? '🔒 Зашифровано' : '[медиа]');
+    preview.innerHTML = `<span>↩ ${escHtml(nick)}: ${escHtml(txt.slice(0, 60))}</span>
+      <button type="button" onclick="clearReply()">✕</button>`;
+    input.focus();
+  };
+
+  window.clearReply = () => {
+    replyToMsg = null;
+    form.querySelector('.reply-bar')?.remove();
+  };
+
+  // ── Удаление из контекстного меню ────────────────────────────────
+  window.deleteMsg = async (msgId) => {
+    await api('DELETE', `/api/messages/${msgId}`);
+  };
+
+  // ── Редактирование из контекстного меню ──────────────────────────
+  window.startEditMessage = (msg) => {
+    input.value = msg.text || '';
+    input.focus();
+    input.dataset.editId = msg.id;
+    let bar = form.querySelector('.edit-bar');
+    if (!bar) { bar = document.createElement('div'); bar.className = 'edit-bar'; form.insertBefore(bar, form.firstChild); }
+    bar.innerHTML = `<span>✏️ Редактирование</span><button type="button" onclick="cancelEdit()">✕</button>`;
+  };
+
+  window.cancelEdit = () => {
+    input.value = '';
+    delete input.dataset.editId;
+    form.querySelector('.edit-bar')?.remove();
+  };
+
+  // ── Отправка формы ────────────────────────────────────────────────
   form.onsubmit = async (e) => {
     e.preventDefault();
     const text = input.value.trim();
+
+    // Режим редактирования
+    if (input.dataset.editId) {
+      if (!text) return;
+      await api('PATCH', `/api/messages/${input.dataset.editId}`, { text });
+      window.cancelEdit();
+      return;
+    }
+
     if (!text) return;
     input.value = '';
     clearTimeout(typingTimer);
     if (typingActive) { wsSend('typing:stop', { chatId }); typingActive = false; }
 
-    if (e2eReady && partnerId) {
-      const enc = await encryptMessage(partnerId, text);
-      if (enc) {
-        pendingPlaintext[chatId] = text;
-        wsSend('message:send', { chatId, ciphertext: enc.ciphertext, signalType: enc.signalType });
-        return;
+    const replyToId = replyToMsg?.id || undefined;
+    window.clearReply();
+
+    // E2E
+    if (isE2EAvailable() && partnerId && chat?.type !== 'GROUP') {
+      const sessionReady = await ensureSession(partnerId);
+      if (sessionReady) {
+        const enc = await encryptMessage(partnerId, text);
+        if (enc) {
+          pendingPlaintext[chatId] = text;
+          wsSend('message:send', { chatId, ciphertext: enc.ciphertext, signalType: enc.signalType, replyToId });
+          // Проверяем остаток prekeys в фоне
+          setTimeout(() => checkAndReplenishPreKeys(), 3000);
+          return;
+        }
       }
     }
-    wsSend('message:send', { chatId, text });
+    wsSend('message:send', { chatId, text, replyToId });
   };
+
+  // ── Файл ──────────────────────────────────────────────────────────
+  if (fileBtn && fileInput) {
+    fileBtn.onclick = () => fileInput.click();
+    fileInput.onchange = async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      fileInput.value = '';
+      const fd = new FormData();
+      fd.append('file', file);
+
+      const token = state.accessToken;
+      try {
+        const res = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+          body: fd,
+        });
+        const json = await res.json();
+        if (json?.success) {
+          wsSend('message:send', { chatId, text: '', mediaUrl: json.data.url, type: json.data.type });
+        }
+      } catch {}
+    };
+  }
+
+  // ── Поиск по сообщениям ────────────────────────────────────────────
+  if (searchBtn) {
+    searchBtn.onclick = () => {
+      const existing = document.getElementById('msg-search-bar');
+      if (existing) { existing.remove(); return; }
+      const bar = document.createElement('div');
+      bar.id = 'msg-search-bar';
+      bar.className = 'msg-search-bar';
+      bar.innerHTML = `<input type="text" placeholder="Поиск в чате..." id="msg-search-input" />
+        <button type="button" id="msg-search-go">🔍</button>
+        <button type="button" id="msg-search-close">✕</button>`;
+      document.getElementById('cw-messages').before(bar);
+      document.getElementById('msg-search-close').onclick = () => bar.remove();
+      document.getElementById('msg-search-go').onclick = () => runMsgSearch(chatId);
+      document.getElementById('msg-search-input').onkeydown = (ev) => { if (ev.key === 'Enter') runMsgSearch(chatId); };
+      document.getElementById('msg-search-input').focus();
+    };
+  }
 
   input.oninput = () => {
     if (!typingActive) { wsSend('typing:start', { chatId }); typingActive = true; }
@@ -732,6 +1050,16 @@ async function openChat(chatId) {
   };
 
   input.focus();
+}
+
+async function runMsgSearch(chatId) {
+  const q = document.getElementById('msg-search-input')?.value.trim();
+  if (!q) return;
+  const res = await api('GET', `/api/chats/${chatId}/messages?q=${encodeURIComponent(q)}&limit=50`);
+  const msgs = (res?.data || []).reverse();
+  const container = document.getElementById('cw-messages');
+  container.innerHTML = `<div class="search-results-header">Результаты поиска: «${escHtml(q)}» (${msgs.length})</div>`;
+  for (const m of msgs) await appendMessage(m);
 }
 
 /* ════════════════════════════════════════════════════════════════════
@@ -750,11 +1078,18 @@ async function appendMessage(msg) {
   if (msg.isDeleted) {
     text = '[удалено]';
   } else if (isEncrypted) {
-    if (msg._decryptedText) {
+    const cached = getPlaintext(msg.id);
+    if (cached) {
+      text = cached;
+    } else if (msg._decryptedText) {
       text = msg._decryptedText;
+      savePlaintext(msg.id, msg._decryptedText);
     } else if (!isMine && isE2EAvailable() && msg.sender?.id) {
       const decrypted = await decryptMessage(msg.sender.id, msg.ciphertext, msg.signalType);
       text = decrypted || '🔒 Не удалось расшифровать';
+      if (decrypted) savePlaintext(msg.id, decrypted);
+    } else if (isMine) {
+      text = '🔒 Зашифрованное сообщение';
     } else {
       text = '🔒 Зашифрованное сообщение';
     }
@@ -810,9 +1145,150 @@ async function appendMessage(msg) {
     meta.appendChild(check);
   }
 
+  // Reply preview
+  if (msg.replyTo && !msg.replyTo.isDeleted) {
+    const replyEl = document.createElement('div');
+    replyEl.className = 'msg-reply-preview';
+    const replyText = msg.replyTo.text || (msg.replyTo.ciphertext ? '🔒 Зашифрованное' : '[медиа]');
+    replyEl.innerHTML = `<span class="reply-nick">${escHtml(msg.replyTo.sender?.nickname || '')}</span> ${escHtml(replyText)}`;
+    bubble.insertBefore(replyEl, bubble.firstChild);
+  }
+
+  // Media
+  if (msg.mediaUrl && !msg.isDeleted) {
+    const mediaEl = buildMediaElement(msg);
+    if (mediaEl) bubble.appendChild(mediaEl);
+  }
+
+  // Reactions bar
+  const reactBar = buildReactBar(msg);
   group.appendChild(bubble);
+  group.appendChild(reactBar);
   group.appendChild(meta);
+
+  // Context menu on right-click / long-press
+  group.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    showMsgContextMenu(e, msg, isMine, group);
+  });
+
   container.appendChild(group);
+}
+
+function buildMediaElement(msg) {
+  const url = msg.mediaUrl;
+  if (!url) return null;
+  const type = msg.type;
+  if (type === 'IMAGE') {
+    const img = document.createElement('img');
+    img.src = url; img.className = 'msg-media-img';
+    img.onclick = () => window.open(url, '_blank');
+    return img;
+  }
+  if (type === 'VIDEO') {
+    const vid = document.createElement('video');
+    vid.src = url; vid.controls = true; vid.className = 'msg-media-video';
+    return vid;
+  }
+  if (type === 'AUDIO') {
+    const aud = document.createElement('audio');
+    aud.src = url; aud.controls = true; aud.className = 'msg-media-audio';
+    return aud;
+  }
+  // Generic file
+  const a = document.createElement('a');
+  a.href = url; a.target = '_blank'; a.className = 'msg-media-file';
+  a.textContent = '📎 ' + (url.split('/').pop() || 'Файл');
+  return a;
+}
+
+function buildReactBar(msg) {
+  const bar = document.createElement('div');
+  bar.className = 'msg-react-bar';
+  bar.dataset.msgId = msg.id;
+  renderReactions(bar, msg.reactions || [], msg.id);
+  return bar;
+}
+
+function renderReactions(bar, reactions, msgId) {
+  // Group by emoji
+  const counts = {};
+  const myReacts = new Set();
+  for (const r of reactions) {
+    counts[r.emoji] = (counts[r.emoji] || 0) + 1;
+    if (r.userId === state.me.id) myReacts.add(r.emoji);
+  }
+  bar.innerHTML = '';
+  for (const [emoji, cnt] of Object.entries(counts)) {
+    const btn = document.createElement('button');
+    btn.className = 'react-chip' + (myReacts.has(emoji) ? ' active' : '');
+    btn.textContent = `${emoji} ${cnt}`;
+    btn.title = myReacts.has(emoji) ? 'Убрать реакцию' : 'Добавить реакцию';
+    btn.onclick = () => toggleReaction(msgId, emoji, myReacts.has(emoji));
+    bar.appendChild(btn);
+  }
+  // "+" кнопка
+  const addBtn = document.createElement('button');
+  addBtn.className = 'react-add-btn';
+  addBtn.textContent = '+';
+  addBtn.title = 'Добавить реакцию';
+  addBtn.onclick = (e) => { e.stopPropagation(); showEmojiPicker(e, msgId); };
+  bar.appendChild(addBtn);
+}
+
+const EMOJI_LIST = ['👍','❤️','😂','😮','😢','🔥'];
+
+function showEmojiPicker(e, msgId) {
+  document.querySelector('.emoji-picker-popup')?.remove();
+  const picker = document.createElement('div');
+  picker.className = 'emoji-picker-popup';
+  EMOJI_LIST.forEach(em => {
+    const btn = document.createElement('button');
+    btn.textContent = em;
+    btn.onclick = () => { toggleReaction(msgId, em, false); picker.remove(); };
+    picker.appendChild(btn);
+  });
+  document.body.appendChild(picker);
+  const rect = e.target.getBoundingClientRect();
+  picker.style.left = rect.left + 'px';
+  picker.style.top = (rect.top - picker.offsetHeight - 4) + 'px';
+  setTimeout(() => document.addEventListener('click', () => picker.remove(), { once: true }), 0);
+}
+
+async function toggleReaction(msgId, emoji, remove) {
+  if (remove) {
+    await api('DELETE', `/api/messages/${msgId}/reactions/${encodeURIComponent(emoji)}`);
+  } else {
+    await api('POST', `/api/messages/${msgId}/reactions`, { emoji });
+  }
+}
+
+function showMsgContextMenu(e, msg, isMine, groupEl) {
+  document.querySelector('.msg-ctx-menu')?.remove();
+  const menu = document.createElement('div');
+  menu.className = 'msg-ctx-menu';
+
+  const addOpt = (label, fn) => {
+    const btn = document.createElement('button');
+    btn.textContent = label;
+    btn.onclick = () => { fn(); menu.remove(); };
+    menu.appendChild(btn);
+  };
+
+  addOpt('↩ Ответить', () => setReplyTo(msg));
+  if (isMine && !msg.isDeleted) {
+    addOpt('✏️ Редактировать', () => startEditMessage(msg));
+    addOpt('🗑 Удалить', () => deleteMsg(msg.id));
+  }
+  addOpt('📋 Копировать', () => {
+    const txt = groupEl.querySelector('.msg-bubble')?.textContent || '';
+    navigator.clipboard.writeText(txt).catch(() => {});
+  });
+
+  document.body.appendChild(menu);
+  menu.style.left = Math.min(e.clientX, window.innerWidth - 160) + 'px';
+  menu.style.top = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 4) + 'px';
+  setTimeout(() => document.addEventListener('click', () => menu.remove(), { once: true }), 0);
 }
 
 function scrollToBottom() {
