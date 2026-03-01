@@ -1,7 +1,7 @@
 import { WebSocket } from 'ws';
 import { sendMessage, markAsRead } from '../../modules/messages/message.service';
 import { prisma } from '../../config/database';
-import { sendToSocket, sendToUsers } from '../ws.server';
+import { sendToSocket, sendToUsers, isUserOnline, sendToUser } from '../ws.server';
 import { WsMessageSendEvent, WsMessageReadEvent } from '../../types';
 
 // ─── Отправка сообщения через WS ─────────────────────────────────────────────
@@ -20,7 +20,6 @@ export async function handleMessageSend(
       replyToId: payload.replyToId,
     });
 
-    // Получить всех участников чата для рассылки
     const members = await prisma.chatMember.findMany({
       where: { chatId: payload.chatId },
       select: { userId: true },
@@ -28,8 +27,23 @@ export async function handleMessageSend(
 
     const memberIds = members.map((m) => m.userId);
 
-    // Разослать всем участникам (включая отправителя — для синхронизации вкладок)
+    // Разослать message:new всем участникам
     sendToUsers(memberIds, { event: 'message:new', payload: message });
+
+    // Проверить кто из получателей онлайн → отправить delivered отправителю
+    const onlineRecipients = memberIds.filter(
+      (id) => id !== userId && isUserOnline(id),
+    );
+
+    if (onlineRecipients.length > 0) {
+      sendToUser(userId, {
+        event: 'message:delivered',
+        payload: {
+          messageId: message.id,
+          chatId: payload.chatId,
+        },
+      });
+    }
   } catch (err) {
     sendToSocket(ws, {
       event: 'error',
@@ -49,14 +63,14 @@ export async function handleMessageRead(
   try {
     await markAsRead(payload.messageId, userId);
 
-    // Получить отправителя сообщения для уведомления
     const msg = await prisma.message.findUnique({
       where: { id: payload.messageId },
       select: { senderId: true, chatId: true },
     });
 
     if (msg) {
-      sendToUsers([msg.senderId], {
+      // Уведомить отправителя: его сообщение прочитали
+      sendToUser(msg.senderId, {
         event: 'message:read',
         payload: {
           messageId: payload.messageId,

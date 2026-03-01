@@ -6,7 +6,7 @@ import { ok, fail } from '../../utils/response';
 
 // Человекочитаемые сообщения для Zod-ошибок
 function zodMessage(err: ZodError): string {
-  const issues = err.errors;
+  const issues = err.issues;
   if (!issues.length) return 'Ошибка валидации';
   const first = issues[0];
   const field = first.path.join('.');

@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { IncomingMessage, Server } from 'http';
 import { verifyAccessToken } from '../utils/jwt';
 import { presenceService } from '../config/redis';
+import { prisma } from '../config/database';
 import { handleWsEvent } from './ws.handler';
 import { WsServerEvent } from '../types';
 
@@ -43,9 +44,13 @@ export function createWsServer(httpServer: Server): WebSocketServer {
     userSockets.get(userId)!.add(ws);
     socketUser.set(ws, userId);
 
-    // ── Онлайн-статус ───────────────────────────────────────────────────────
+    // ── Онлайн-статус → Redis + DB ──────────────────────────────────────────
     await presenceService.setOnline(userId);
-    broadcastPresence(userId, 'user:online');
+    await prisma.user.update({
+      where: { id: userId },
+      data: { isOnline: true },
+    }).catch(() => {});
+    broadcastPresence(userId, 'user:online', null);
 
     console.log(`[WS] Connected: ${nickname} (${userId})`);
 
@@ -76,7 +81,14 @@ export function createWsServer(httpServer: Server): WebSocketServer {
         if (sockets.size === 0) {
           userSockets.delete(userId);
           await presenceService.setOffline(userId);
-          broadcastPresence(userId, 'user:offline');
+
+          const now = new Date();
+          await prisma.user.update({
+            where: { id: userId },
+            data: { isOnline: false, lastOnline: now },
+          }).catch(() => {});
+
+          broadcastPresence(userId, 'user:offline', now.toISOString());
         }
       }
       socketUser.delete(ws);
@@ -132,12 +144,16 @@ export function sendToUsers<T>(
   }
 }
 
-/** Оповестить всех подключённых о смене онлайн-статуса */
+/** Оповестить всех о смене онлайн-статуса (с lastOnline при offline) */
 function broadcastPresence(
   userId: string,
   eventType: 'user:online' | 'user:offline',
+  lastOnline: string | null,
 ): void {
-  const event = JSON.stringify({ event: eventType, payload: { userId } });
+  const event = JSON.stringify({
+    event: eventType,
+    payload: { userId, lastOnline },
+  });
   for (const [, sockets] of userSockets) {
     for (const ws of sockets) {
       if (ws.readyState === WebSocket.OPEN) {
@@ -145,4 +161,10 @@ function broadcastPresence(
       }
     }
   }
+}
+
+/** Проверить, онлайн ли userId (есть ли активные сокеты) */
+export function isUserOnline(userId: string): boolean {
+  const sockets = userSockets.get(userId);
+  return !!sockets && sockets.size > 0;
 }

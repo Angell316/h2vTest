@@ -61,6 +61,7 @@ export type WsIncomingEvent =
 // ─── WebSocket events (сервер → клиент) ──────────────────────────────────────
 export type WsServerEventType =
   | 'message:new'
+  | 'message:delivered'
   | 'message:read'
   | 'message:deleted'
   | 'typing:started'

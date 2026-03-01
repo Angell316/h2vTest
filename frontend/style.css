@@ -236,7 +236,13 @@ body {
 
 .msg-time { font-size: 10px; color: var(--muted); }
 
-.msg-check { font-size: 11px; color: var(--muted); letter-spacing: -2px; transition: color .3s; }
+/* ✓ = sent (серая 1 галочка), ✓✓ delivered (серые), ✓✓ read (фиолетовые) */
+.msg-check {
+  font-size: 12px; letter-spacing: -2px; transition: color .3s;
+  font-weight: 600; margin-left: 2px;
+}
+.msg-check.sent { color: rgba(255,255,255,.45); }
+.msg-check.delivered { color: rgba(255,255,255,.7); }
 .msg-check.read { color: var(--accent2); }
 
 /* ─── Typing bar ─────────────────────────────────────────────────── */

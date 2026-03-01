@@ -145,12 +145,13 @@ function showConnectionStatus(status) {
    ════════════════════════════════════════════════════════════════════ */
 function handleWsEvent({ event, payload }) {
   switch (event) {
-    case 'message:new':    onNewMessage(payload);    break;
-    case 'message:read':   onMessageRead(payload);   break;
-    case 'typing:started': onTypingStarted(payload); break;
-    case 'typing:stopped': onTypingStopped(payload); break;
-    case 'user:online':    onUserOnline(payload);    break;
-    case 'user:offline':   onUserOffline(payload);   break;
+    case 'message:new':       onNewMessage(payload);      break;
+    case 'message:delivered': onMessageDelivered(payload); break;
+    case 'message:read':      onMessageRead(payload);     break;
+    case 'typing:started':    onTypingStarted(payload);   break;
+    case 'typing:stopped':    onTypingStopped(payload);   break;
+    case 'user:online':       onUserOnline(payload);      break;
+    case 'user:offline':      onUserOffline(payload);     break;
   }
 }
 
@@ -190,15 +191,24 @@ function onNewMessage(msg) {
   }
 }
 
+/* ─── message:delivered — получатель онлайн, сообщение дошло ──── */
+function onMessageDelivered({ messageId }) {
+  const el = document.querySelector(`[data-msg-id="${messageId}"] .msg-check`);
+  if (el && !el.classList.contains('read')) {
+    el.classList.add('delivered');
+    el.innerHTML = '✓✓';
+    el.title = 'Доставлено';
+  }
+}
+
 /* ─── message:read ──────────────────────────────────────────────── */
-function onMessageRead({ messageId, readBy }) {
-  const el = document.querySelector(`[data-msg-id="${messageId}"]`);
+function onMessageRead({ messageId }) {
+  const el = document.querySelector(`[data-msg-id="${messageId}"] .msg-check`);
   if (el) {
-    const check = el.querySelector('.msg-check');
-    if (check) {
-      check.classList.add('read');
-      check.title = 'Прочитано';
-    }
+    el.classList.remove('delivered');
+    el.classList.add('read');
+    el.innerHTML = '✓✓';
+    el.title = 'Прочитано';
   }
 }
 
@@ -236,29 +246,73 @@ function onTypingStopped({ chatId }) {
 }
 
 /* ─── presence ──────────────────────────────────────────────────── */
+// userId → ISO дата последнего выхода
+const lastOnlineCache = {};
+
 function onUserOnline({ userId }) {
   state.onlineUsers.add(userId);
-  refreshPresenceUI(userId, true);
+  refreshPresenceUI(userId);
 }
 
-function onUserOffline({ userId }) {
+function onUserOffline({ userId, lastOnline }) {
   state.onlineUsers.delete(userId);
-  refreshPresenceUI(userId, false);
+  if (lastOnline) lastOnlineCache[userId] = lastOnline;
+  refreshPresenceUI(userId);
 }
 
-function refreshPresenceUI(userId, online) {
+function refreshPresenceUI(userId) {
   renderChatList();
 
-  // Обновить хедер открытого чата
   if (!state.activeChatId) return;
   const chat = state.chats.find(c => c.id === state.activeChatId);
-  if (!chat || getPartnerUserId(chat) !== userId) return;
+  if (!chat) return;
+  const partnerId = getPartnerUserId(chat);
+  if (partnerId !== userId) return;
 
+  updateChatHeaderStatus(partnerId);
+}
+
+function updateChatHeaderStatus(partnerId) {
   const el = document.getElementById('cw-status');
-  if (el) {
-    el.textContent = online ? 'онлайн' : 'офлайн';
-    el.className = 'chat-status' + (online ? ' online' : '');
+  if (!el || !partnerId) return;
+
+  if (state.onlineUsers.has(partnerId)) {
+    el.textContent = 'онлайн';
+    el.className = 'chat-status online';
+  } else {
+    const lastSeen = lastOnlineCache[partnerId] || getPartnerLastOnline(partnerId);
+    el.textContent = lastSeen ? formatLastSeen(lastSeen) : 'офлайн';
+    el.className = 'chat-status';
   }
+}
+
+function getPartnerLastOnline(partnerId) {
+  for (const chat of state.chats) {
+    const m = chat.members?.find(m => (m.user?.id || m.userId) === partnerId);
+    if (m?.user?.lastOnline) return m.user.lastOnline;
+  }
+  return null;
+}
+
+function formatLastSeen(iso) {
+  const d = new Date(iso);
+  const now = new Date();
+  const diffMs = now - d;
+  const diffMin = Math.floor(diffMs / 60000);
+
+  if (diffMin < 1) return 'был(а) только что';
+  if (diffMin < 60) return `был(а) ${diffMin} мин. назад`;
+
+  const isToday = d.toDateString() === now.toDateString();
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+
+  const time = d.toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
+
+  if (isToday) return `был(а) в ${time}`;
+  if (isYesterday) return `был(а) вчера в ${time}`;
+  return `был(а) ${d.toLocaleDateString('ru', { day: 'numeric', month: 'short' })}`;
 }
 
 /* ─── Notification sound (generated) ────────────────────────────── */
@@ -433,9 +487,7 @@ async function openChat(chatId) {
   document.getElementById('cw-avatar').textContent = initial;
   document.getElementById('cw-avatar').className = `chat-avatar av-${charColor(initial)}`;
 
-  const statusEl = document.getElementById('cw-status');
-  statusEl.textContent = isOnline ? 'онлайн' : 'офлайн';
-  statusEl.className = 'chat-status' + (isOnline ? ' online' : '');
+  updateChatHeaderStatus(partnerId);
 
   // История
   const res = await api('GET', `/api/chats/${chatId}/messages?limit=50`);
@@ -482,7 +534,9 @@ function appendMessage(msg) {
   const isMine = msg.sender?.id === state.me.id;
   const text   = msg.isDeleted ? '[удалено]' : (msg.text || '[медиа]');
   const time   = new Date(msg.createdAt).toLocaleTimeString('ru', { hour: '2-digit', minute: '2-digit' });
-  const hasRead = msg.readReceipts?.length > 0;
+
+  // Определяем статус сообщения
+  const hasRead = msg.readReceipts?.some(r => r.userId !== state.me.id);
 
   const group = document.createElement('div');
   group.className = `msg-group ${isMine ? 'mine' : 'theirs'}`;
@@ -507,12 +561,19 @@ function appendMessage(msg) {
   timeEl.textContent = time;
   meta.appendChild(timeEl);
 
-  // Checkmarks для своих сообщений
+  // Checkmarks: ✓ = отправлено, ✓✓ серые = доставлено, ✓✓ фиолет = прочитано
   if (isMine) {
     const check = document.createElement('span');
-    check.className = 'msg-check' + (hasRead ? ' read' : '');
-    check.innerHTML = '✓✓';
-    check.title = hasRead ? 'Прочитано' : 'Доставлено';
+    if (hasRead) {
+      check.className = 'msg-check read';
+      check.innerHTML = '✓✓';
+      check.title = 'Прочитано';
+    } else {
+      // Отправлено (1 галочка) — delivered обновит до ✓✓
+      check.className = 'msg-check sent';
+      check.innerHTML = '✓';
+      check.title = 'Отправлено';
+    }
     meta.appendChild(check);
   }
 
