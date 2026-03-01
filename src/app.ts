@@ -45,18 +45,21 @@ async function start() {
   try {
     await prisma.$connect();
     console.log('[DB] PostgreSQL connected');
-
-    await redis.connect();
-
-    httpServer.listen(PORT, () => {
-      console.log(`[App] HTTP server running on http://localhost:${PORT}`);
-      console.log(`[App] WebSocket server running on ws://localhost:${PORT}/ws`);
-      console.log(`[App] Health: http://localhost:${PORT}/health`);
-    });
   } catch (err) {
-    console.error('[App] Startup error:', err);
+    console.error('[DB] Failed to connect to PostgreSQL:', err);
     process.exit(1);
   }
+
+  // Redis — опциональный, не блокирует старт
+  redis.connect().catch(() => {
+    console.warn('[Redis] Not available — presence features disabled');
+  });
+
+  httpServer.listen(PORT, () => {
+    console.log(`[App] HTTP  → http://localhost:${PORT}`);
+    console.log(`[App] WS   → ws://localhost:${PORT}/ws`);
+    console.log(`[App] Health → http://localhost:${PORT}/health`);
+  });
 }
 
 start();
