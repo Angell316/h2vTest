@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import http from 'http';
+import path from 'path';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -18,9 +19,16 @@ const app = express();
 const PORT = parseInt(process.env.PORT || '3000');
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(helmet());
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json());
+
+// ─── Frontend static ──────────────────────────────────────────────────────────
+const frontendPath = path.join(__dirname, '../../frontend');
+app.use(express.static(frontendPath));
 
 // ─── Healthcheck ──────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
