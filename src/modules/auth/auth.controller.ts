@@ -12,14 +12,16 @@ function zodMessage(err: ZodError): string {
   const field = first.path.join('.');
   const msg = first.message;
 
-  const translations: Record<string, string> = {
-    'Nickname min 3 chars':  'Никнейм минимум 3 символа',
-    'Only letters, digits and underscores': 'Никнейм: только латиница, цифры и _',
-    'Password min 8 chars':  'Пароль минимум 8 символов',
-    'Invalid email':         'Неверный формат email',
+  // Возвращаем коды ошибок (фронтенд переводит в русский)
+  const codes: Record<string, string> = {
+    'Nickname min 3 chars':  'NICKNAME_TOO_SHORT',
+    'Only letters, digits and underscores': 'NICKNAME_INVALID_CHARS',
+    'Password min 8 chars':  'PASSWORD_TOO_SHORT',
+    'Invalid email':         'EMAIL_INVALID',
+    'String must contain at least 1 character(s)': 'FIELD_REQUIRED',
   };
 
-  return translations[msg] ?? `${field}: ${msg}`;
+  return codes[msg] ?? `VALIDATION_ERROR:${field}`;
 }
 
 export async function registerHandler(
@@ -35,10 +37,8 @@ export async function registerHandler(
     if (err instanceof ZodError) {
       fail(res, zodMessage(err), 422);
     } else if (err instanceof Error && err.message.includes('already')) {
-      const ru = err.message.includes('Email')
-        ? 'Этот email уже занят'
-        : 'Этот никнейм уже занят';
-      fail(res, ru, 409);
+      const code = err.message.includes('Email') ? 'EMAIL_TAKEN' : 'NICKNAME_TAKEN';
+      fail(res, code, 409);
     } else {
       next(err);
     }
@@ -58,7 +58,7 @@ export async function loginHandler(
     if (err instanceof ZodError) {
       fail(res, zodMessage(err), 422);
     } else if (err instanceof Error && err.message === 'Invalid credentials') {
-      fail(res, 'Неверный email или пароль', 401);
+      fail(res, 'INVALID_CREDENTIALS', 401);
     } else {
       next(err);
     }
