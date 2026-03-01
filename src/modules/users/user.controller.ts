@@ -66,3 +66,48 @@ export async function updateMeHandler(
     next(err);
   }
 }
+
+export async function deleteMeHandler(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    await userService.deleteAccount(req.user!.sub);
+    ok(res, { message: 'Account deleted' });
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function registerDeviceTokenHandler(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const schema = z.object({
+      token: z.string().min(1),
+      platform: z.enum(['IOS', 'ANDROID', 'WEB']),
+    });
+    const { token, platform } = schema.parse(req.body);
+    const result = await userService.registerDeviceToken(req.user!.sub, token, platform);
+    ok(res, result, 201);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function removeDeviceTokenHandler(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { token } = z.object({ token: z.string().min(1) }).parse(req.body);
+    await userService.removeDeviceToken(token, req.user!.sub);
+    ok(res, { message: 'Device token removed' });
+  } catch (err) {
+    next(err);
+  }
+}

@@ -53,3 +53,27 @@ export async function updateProfile(
     select: PUBLIC_SELECT,
   });
 }
+
+// ─── Удалить аккаунт (все данные через cascade) ───────────────────────────────
+export async function deleteAccount(userId: string) {
+  await prisma.user.delete({ where: { id: userId } });
+}
+
+// ─── Зарегистрировать токен устройства для push-уведомлений ──────────────────
+export async function registerDeviceToken(
+  userId: string,
+  token: string,
+  platform: 'IOS' | 'ANDROID' | 'WEB',
+) {
+  return prisma.deviceToken.upsert({
+    where: { token },
+    create: { userId, token, platform },
+    update: { userId, platform },
+    select: { id: true, token: true, platform: true, createdAt: true },
+  });
+}
+
+// ─── Удалить токен устройства (при logout на конкретном устройстве) ───────────
+export async function removeDeviceToken(token: string, userId: string) {
+  await prisma.deviceToken.deleteMany({ where: { token, userId } });
+}

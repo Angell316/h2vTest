@@ -68,6 +68,31 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get('/api/health', async (_req, res) => {
+  const result: Record<string, string> = { status: 'ok', timestamp: new Date().toISOString() };
+
+  // Проверка PostgreSQL
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    result.db = 'ok';
+  } catch {
+    result.db = 'error';
+    result.status = 'degraded';
+  }
+
+  // Проверка Redis
+  try {
+    await redis.ping();
+    result.redis = 'ok';
+  } catch {
+    result.redis = 'error';
+    result.status = result.status === 'ok' ? 'degraded' : result.status;
+  }
+
+  const statusCode = result.status === 'ok' ? 200 : 503;
+  res.status(statusCode).json(result);
+});
+
 // ─── Routes ───────────────────────────────────────────────────────────────────
 app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/users', apiLimiter, userRoutes);

@@ -88,7 +88,7 @@ export async function getChatMessages(
 
   if (!isMember) throw new Error('Not a member of this chat');
 
-  return prisma.message.findMany({
+  const messages = await prisma.message.findMany({
     where: {
       chatId,
       isDeleted: false,
@@ -99,6 +99,9 @@ export async function getChatMessages(
     take: limit,
     ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
   });
+
+  const nextCursor = messages.length === limit ? messages[messages.length - 1].id : null;
+  return { messages, nextCursor };
 }
 
 // ─── Добавить реакцию ─────────────────────────────────────────────────────────
@@ -133,11 +136,25 @@ export async function removeReaction(messageId: string, userId: string, emoji: s
 
 // ─── Отметить как прочитанное ─────────────────────────────────────────────────
 export async function markAsRead(messageId: string, userId: string) {
-  return prisma.readReceipt.upsert({
-    where: { messageId_userId: { messageId, userId } },
-    create: { messageId, userId },
-    update: { readAt: new Date() },
+  const msg = await prisma.message.findUnique({
+    where: { id: messageId },
+    select: { chatId: true, senderId: true },
   });
+  if (!msg) throw new Error('Message not found');
+
+  const isMember = await prisma.chatMember.findFirst({
+    where: { chatId: msg.chatId, userId },
+  });
+  if (!isMember) throw new Error('Not a member of this chat');
+
+  const readAt = new Date();
+  await prisma.readReceipt.upsert({
+    where: { messageId_userId: { messageId, userId } },
+    create: { messageId, userId, readAt },
+    update: { readAt },
+  });
+
+  return { chatId: msg.chatId, senderId: msg.senderId, readAt };
 }
 
 // ─── Удалить сообщение (soft delete) ─────────────────────────────────────────

@@ -18,17 +18,52 @@ export async function getMessagesHandler(
       q: z.string().min(1).max(200).optional(),
     });
     const { cursor, limit, q } = schema.parse(req.query);
-    const messages = await messageService.getChatMessages(
+    const result = await messageService.getChatMessages(
       String(req.params.chatId),
       req.user!.sub,
       cursor,
       limit,
       q,
     );
-    ok(res, messages);
+    ok(res, result);
   } catch (err) {
     if (err instanceof Error && err.message.includes('member')) {
       fail(res, err.message, 403);
+    } else {
+      next(err);
+    }
+  }
+}
+
+export async function markAsReadHandler(
+  req: AuthRequest,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const { chatId, senderId, readAt } = await messageService.markAsRead(
+      String(req.params.id),
+      req.user!.sub,
+    );
+    // Уведомить отправителя о прочтении
+    sendToUsers(
+      [senderId],
+      {
+        event: 'message:read',
+        payload: {
+          messageId: String(req.params.id),
+          chatId,
+          readerId: req.user!.sub,
+          readAt,
+        },
+      },
+    );
+    ok(res, { message: 'Marked as read' });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('member')) {
+      fail(res, err.message, 403);
+    } else if (err instanceof Error && err.message === 'Message not found') {
+      fail(res, err.message, 404);
     } else {
       next(err);
     }

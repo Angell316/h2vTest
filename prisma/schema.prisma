@@ -27,6 +27,7 @@ model User {
   reactions      Reaction[]
   preKeyBundle   PreKeyBundle?
   oneTimePreKeys OneTimePreKey[]
+  deviceTokens   DeviceToken[]
 
   @@map("users")
 }
@@ -166,6 +167,27 @@ enum MessageType {
   AUDIO
   VIDEO
   SYSTEM
+}
+
+// ─── Токены устройств (Push-уведомления FCM/APNs) ───────────────────────────────
+model DeviceToken {
+  id        String         @id @default(cuid())
+  userId    String         @map("user_id")
+  token     String         @unique
+  platform  DevicePlatform
+  createdAt DateTime       @default(now()) @map("created_at")
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+enum DevicePlatform {
+  IOS
+  ANDROID
+  WEB
 }
 
 // ─── Прочитанность ──────────────────────────────────────────────────────────────
