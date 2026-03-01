@@ -32,6 +32,8 @@ export interface WsMessageSendEvent extends WsBaseEvent {
   payload: {
     chatId: string;
     text?: string;
+    ciphertext?: string;
+    signalType?: number;
     type?: 'TEXT' | 'IMAGE' | 'FILE' | 'AUDIO' | 'VIDEO';
     mediaUrl?: string;
     replyToId?: string;

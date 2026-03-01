@@ -4,6 +4,8 @@ const MESSAGE_SELECT = {
   id: true,
   chatId: true,
   text: true,
+  ciphertext: true,
+  signalType: true,
   type: true,
   mediaUrl: true,
   replyToId: true,
@@ -24,6 +26,8 @@ export async function sendMessage(data: {
   chatId: string;
   senderId: string;
   text?: string;
+  ciphertext?: string;
+  signalType?: number;
   type?: 'TEXT' | 'IMAGE' | 'FILE' | 'AUDIO' | 'VIDEO';
   mediaUrl?: string;
   replyToId?: string;
@@ -39,6 +43,8 @@ export async function sendMessage(data: {
       chatId: data.chatId,
       senderId: data.senderId,
       text: data.text,
+      ciphertext: data.ciphertext,
+      signalType: data.signalType ?? 0,
       type: data.type ?? 'TEXT',
       mediaUrl: data.mediaUrl,
       replyToId: data.replyToId,

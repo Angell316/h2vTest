@@ -15,6 +15,8 @@ export async function handleMessageSend(
       chatId: payload.chatId,
       senderId: userId,
       text: payload.text,
+      ciphertext: payload.ciphertext,
+      signalType: payload.signalType ?? 0,
       type: payload.type ?? 'TEXT',
       mediaUrl: payload.mediaUrl,
       replyToId: payload.replyToId,

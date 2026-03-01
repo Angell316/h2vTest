@@ -20,10 +20,12 @@ model User {
   updatedAt    DateTime  @updatedAt @map("updated_at")
 
   // Relations
-  refreshTokens RefreshToken[]
-  chatMembers   ChatMember[]
-  sentMessages  Message[]      @relation("SentMessages")
-  readReceipts  ReadReceipt[]
+  refreshTokens  RefreshToken[]
+  chatMembers    ChatMember[]
+  sentMessages   Message[]        @relation("SentMessages")
+  readReceipts   ReadReceipt[]
+  preKeyBundle   PreKeyBundle?
+  oneTimePreKeys OneTimePreKey[]
 
   @@map("users")
 }
@@ -85,17 +87,19 @@ enum ChatMemberRole {
 
 // ─── Сообщение ──────────────────────────────────────────────────────────────────
 model Message {
-  id         String      @id @default(cuid())
-  chatId     String      @map("chat_id")
-  senderId   String      @map("sender_id")
-  text       String?
-  type       MessageType @default(TEXT)
-  mediaUrl   String?     @map("media_url")
-  replyToId  String?     @map("reply_to_id")
-  isEdited   Boolean     @default(false) @map("is_edited")
-  isDeleted  Boolean     @default(false) @map("is_deleted")
-  createdAt  DateTime    @default(now()) @map("created_at")
-  updatedAt  DateTime    @updatedAt @map("updated_at")
+  id          String      @id @default(cuid())
+  chatId      String      @map("chat_id")
+  senderId    String      @map("sender_id")
+  text        String?
+  ciphertext  String?     @map("ciphertext")
+  signalType  Int         @default(0) @map("signal_type") // 0=plaintext, 1=preKeyWhisper, 3=whisper
+  type        MessageType @default(TEXT)
+  mediaUrl    String?     @map("media_url")
+  replyToId   String?     @map("reply_to_id")
+  isEdited    Boolean     @default(false) @map("is_edited")
+  isDeleted   Boolean     @default(false) @map("is_deleted")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
 
   chat        Chat          @relation(fields: [chatId], references: [id], onDelete: Cascade)
   sender      User          @relation("SentMessages", fields: [senderId], references: [id])
@@ -104,6 +108,33 @@ model Message {
   readReceipts ReadReceipt[]
 
   @@map("messages")
+}
+
+// ─── Signal Protocol: PreKey Bundle ─────────────────────────────────────────────
+model PreKeyBundle {
+  id              String @id @default(cuid())
+  userId          String @unique @map("user_id")
+  registrationId  Int    @map("registration_id")
+  identityKey     String @map("identity_key")
+  signedPreKeyId  Int    @map("signed_prekey_id")
+  signedPreKey    String @map("signed_prekey")
+  signedPreKeySig String @map("signed_prekey_sig")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("prekey_bundles")
+}
+
+// ─── Signal Protocol: One-Time PreKeys ──────────────────────────────────────────
+model OneTimePreKey {
+  id        String @id @default(cuid())
+  userId    String @map("user_id")
+  keyId     Int    @map("key_id")
+  publicKey String @map("public_key")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("one_time_prekeys")
 }
 
 enum MessageType {

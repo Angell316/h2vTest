@@ -14,6 +14,7 @@ import authRoutes from './modules/auth/auth.routes';
 import userRoutes from './modules/users/user.routes';
 import chatRoutes from './modules/chats/chat.routes';
 import messageRoutes from './modules/messages/message.routes';
+import keysRoutes from './modules/keys/keys.routes';
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000');
@@ -40,6 +41,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/chats', chatRoutes);
 app.use('/api', messageRoutes);
+app.use('/api/keys', keysRoutes);
 
 // ─── Error handler ────────────────────────────────────────────────────────────
 app.use(errorMiddleware);
