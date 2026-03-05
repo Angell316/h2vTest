@@ -1,7 +1,7 @@
 package com.example.h2v1test
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,18 +12,22 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Message
-import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavType
@@ -36,6 +40,9 @@ import com.example.h2v1test.ui.chat.ChatScreen
 import com.example.h2v1test.ui.chatlist.ChatListScreen
 import com.example.h2v1test.ui.profile.ProfileScreen
 import com.example.h2v1test.ui.theme.H2VColors
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.haze
+import dev.chrisbanes.haze.hazeChild
 
 sealed class Screen(val route: String) {
     object Auth : Screen("auth")
@@ -65,10 +72,10 @@ fun AppNavigation(appState: AppState) {
     NavHost(
         navController = navController,
         startDestination = startDestination,
-        enterTransition = { slideInHorizontally(tween(280)) { it } },
-        exitTransition = { slideOutHorizontally(tween(280)) { -it / 3 } },
-        popEnterTransition = { slideInHorizontally(tween(280)) { -it / 3 } },
-        popExitTransition = { slideOutHorizontally(tween(280)) { it } }
+        enterTransition = { slideInHorizontally(tween(300, easing = EaseOutCubic)) { it } + fadeIn(tween(200)) },
+        exitTransition = { slideOutHorizontally(tween(300, easing = EaseInCubic)) { -it / 4 } + fadeOut(tween(150)) },
+        popEnterTransition = { slideInHorizontally(tween(300, easing = EaseOutCubic)) { -it / 4 } + fadeIn(tween(200)) },
+        popExitTransition = { slideOutHorizontally(tween(300, easing = EaseInCubic)) { it } + fadeOut(tween(150)) }
     ) {
         composable(Screen.Auth.route) {
             AuthScreen(appState = appState, onSuccess = {
@@ -108,25 +115,33 @@ fun MainTabView(
 ) {
     var selectedTab by remember { mutableStateOf(AppTab.CHATS) }
     var showTabBar by remember { mutableStateOf(true) }
+    val hazeState = remember { HazeState() }
 
     Box(modifier = Modifier.fillMaxSize().background(H2VColors.AppBgDark)) {
-        when (selectedTab) {
-            AppTab.CHATS -> ChatListScreen(
-                appState = appState,
-                onNavigateToChat = onNavigateToChat,
-                onHideTabBar = { showTabBar = false },
-                onShowTabBar = { showTabBar = true }
-            )
-            AppTab.PROFILE -> ProfileScreen(appState = appState)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .haze(hazeState)
+        ) {
+            when (selectedTab) {
+                AppTab.CHATS -> ChatListScreen(
+                    appState = appState,
+                    onNavigateToChat = onNavigateToChat,
+                    onHideTabBar = { showTabBar = false },
+                    onShowTabBar = { showTabBar = true }
+                )
+                AppTab.PROFILE -> ProfileScreen(appState = appState)
+            }
         }
 
         AnimatedVisibility(
             visible = showTabBar,
-            enter = slideInVertically { it } + fadeIn(),
-            exit = slideOutVertically { it } + fadeOut(),
+            enter = slideInVertically(tween(300, easing = EaseOutCubic)) { it } + fadeIn(tween(200)),
+            exit = slideOutVertically(tween(250, easing = EaseInCubic)) { it } + fadeOut(tween(150)),
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
-            GlassTabBar(
+            LiquidGlassTabBar(
+                hazeState = hazeState,
                 selectedTab = selectedTab,
                 onTabSelected = { selectedTab = it }
             )
@@ -135,75 +150,198 @@ fun MainTabView(
 }
 
 @Composable
-fun GlassTabBar(
+fun LiquidGlassTabBar(
+    hazeState: HazeState,
     selectedTab: AppTab,
     onTabSelected: (AppTab) -> Unit
 ) {
-    Row(
-        horizontalArrangement = Arrangement.SpaceEvenly,
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .padding(start = 16.dp, end = 16.dp, bottom = 28.dp)
-            .clip(CircleShape)
-            .background(H2VColors.GlassSurfaceDark.copy(alpha = 0.52f))
-            .border(
-                width = 0.5.dp,
-                brush = Brush.horizontalGradient(
-                    listOf(Color.Transparent, Color.White.copy(0.32f), Color.White.copy(0.22f), Color.Transparent)
-                ),
-                shape = CircleShape
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .hazeChild(state = hazeState)
+                .drawBehind {
+                    // Specular highlight — bright line at top edge
+                    drawLine(
+                        brush = Brush.horizontalGradient(
+                            listOf(
+                                Color.Transparent,
+                                Color.White.copy(0.06f),
+                                Color.White.copy(0.22f),
+                                Color.White.copy(0.22f),
+                                Color.White.copy(0.06f),
+                                Color.Transparent
+                            )
+                        ),
+                        start = Offset(0f, 0f),
+                        end = Offset(size.width, 0f),
+                        strokeWidth = 0.8.dp.toPx()
+                    )
+                }
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 10.dp)
+        ) {
+            LiquidGlassTabItem(
+                icon = Icons.Filled.ChatBubble,
+                label = "Чаты",
+                isActive = selectedTab == AppTab.CHATS,
+                onClick = { onTabSelected(AppTab.CHATS) }
             )
-            .padding(horizontal = 8.dp, vertical = 8.dp)
-    ) {
-        GlassTabItem(
-            icon = Icons.Filled.ChatBubble,
-            label = "Чаты",
-            isActive = selectedTab == AppTab.CHATS,
-            onClick = { onTabSelected(AppTab.CHATS) }
-        )
-        GlassTabItem(
-            icon = Icons.Filled.Person,
-            label = "Профиль",
-            isActive = selectedTab == AppTab.PROFILE,
-            onClick = { onTabSelected(AppTab.PROFILE) }
-        )
+            LiquidGlassTabItem(
+                icon = Icons.Filled.Person,
+                label = "Профиль",
+                isActive = selectedTab == AppTab.PROFILE,
+                onClick = { onTabSelected(AppTab.PROFILE) }
+            )
+        }
     }
 }
 
 @Composable
-fun GlassTabItem(
+fun RowScope.LiquidGlassTabItem(
     icon: ImageVector,
     label: String,
     isActive: Boolean,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
+
+    val iconScale by animateFloatAsState(
+        targetValue = if (isActive) 1.18f else 1.0f,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = 500f),
+        label = "scale"
+    )
+    val iconAlpha by animateFloatAsState(
+        targetValue = if (isActive) 1.0f else 0.42f,
+        animationSpec = tween(220, easing = EaseInOutCubic),
+        label = "alpha"
+    )
+    val textAlpha by animateFloatAsState(
+        targetValue = if (isActive) 0.88f else 0.32f,
+        animationSpec = tween(220),
+        label = "textAlpha"
+    )
+
+    Box(
+        contentAlignment = Alignment.Center,
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .then(
-                if (isActive) Modifier
-                    .background(Color.White.copy(alpha = 0.13f))
-                    .border(0.5.dp, Color.White.copy(0.22f), RoundedCornerShape(16.dp))
-                else Modifier
-            )
+            .weight(1f)
+            .clip(RoundedCornerShape(20.dp))
             .clickable(interactionSource = interactionSource, indication = null) { onClick() }
-            .padding(horizontal = 28.dp, vertical = 6.dp)
+            .padding(vertical = 4.dp)
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = label,
-            tint = if (isActive) Color.White.copy(alpha = 0.95f) else Color.White.copy(0.3f),
-            modifier = Modifier.size(22.dp)
-        )
-        Spacer(Modifier.height(2.dp))
-        Text(
-            text = label,
-            fontSize = 10.sp,
-            fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (isActive) Color.White.copy(0.88f) else Color.White.copy(0.28f)
+        // Active glow pill
+        if (isActive) {
+            AnimatedGlowPill()
+        }
+
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (isActive) H2VColors.AccentBlue.copy(alpha = iconAlpha)
+                       else Color.White.copy(alpha = iconAlpha),
+                modifier = Modifier
+                    .size(24.dp)
+                    .scale(iconScale)
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                text = label,
+                fontSize = 10.sp,
+                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                color = if (isActive) H2VColors.AccentBlue.copy(alpha = textAlpha)
+                        else Color.White.copy(alpha = textAlpha),
+                letterSpacing = 0.2.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun AnimatedGlowPill() {
+    val infiniteTransition = rememberInfiniteTransition(label = "glow")
+    val glowAlpha by infiniteTransition.animateFloat(
+        initialValue = 0.18f,
+        targetValue = 0.28f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1800, easing = EaseInOutSine),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "glowAlpha"
+    )
+
+    Box(
+        modifier = Modifier
+            .size(width = 72.dp, height = 44.dp)
+            .coloredShadow(
+                color = H2VColors.AccentBlue.copy(alpha = 0.35f),
+                borderRadius = 22.dp,
+                blurRadius = 12.dp
+            )
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(alpha = glowAlpha),
+                        H2VColors.AccentBlue.copy(alpha = glowAlpha * 0.6f),
+                        Color.Transparent
+                    )
+                ),
+                RoundedCornerShape(22.dp)
+            )
+            .border(
+                width = 0.5.dp,
+                brush = Brush.verticalGradient(
+                    listOf(
+                        Color.White.copy(0.35f),
+                        H2VColors.AccentBlue.copy(0.15f),
+                        Color.Transparent
+                    )
+                ),
+                shape = RoundedCornerShape(22.dp)
+            )
+    )
+}
+
+fun Modifier.coloredShadow(
+    color: Color,
+    borderRadius: Dp = 0.dp,
+    blurRadius: Dp = 8.dp,
+    offsetX: Dp = 0.dp,
+    offsetY: Dp = 0.dp
+): Modifier = this.drawBehind {
+    drawIntoCanvas { canvas ->
+        val paint = Paint().apply {
+            asFrameworkPaint().apply {
+                isAntiAlias = true
+                this.color = android.graphics.Color.TRANSPARENT
+                setShadowLayer(
+                    blurRadius.toPx(),
+                    offsetX.toPx(),
+                    offsetY.toPx(),
+                    android.graphics.Color.argb(
+                        (color.alpha * 255).toInt(),
+                        (color.red * 255).toInt(),
+                        (color.green * 255).toInt(),
+                        (color.blue * 255).toInt()
+                    )
+                )
+            }
+        }
+        canvas.drawRoundRect(
+            left = 0f,
+            top = 0f,
+            right = size.width,
+            bottom = size.height,
+            radiusX = borderRadius.toPx(),
+            radiusY = borderRadius.toPx(),
+            paint = paint
         )
     }
 }

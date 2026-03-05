@@ -6,8 +6,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.Modifier
 import com.example.h2v1test.data.network.ApiClient
 import com.example.h2v1test.data.network.WebSocketClient
@@ -34,7 +32,6 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier
                         .fillMaxSize()
                         .background(H2VColors.AppBgDark)
-                        .statusBarsPadding()
                 ) {
                     AppNavigation(appState = appState)
                 }

@@ -1,4 +1,16 @@
-﻿## Версия 0.9.0 — Android: сборка и исправление ошибок (05.03.2026)
+﻿## Версия 1.0.0 — Android: Liquid Glass UI (05.03.2026)
+
+### Что сделано
+- Liquid glass нижняя панель: библиотека haze (backdrop blur) + hazeChild
+- Animated glow pill для активного таба + spring анимации иконок
+- Specular highlight border (верхняя светящаяся линия)
+- Components.kt: liquidGlass modifier с vертикальным градиентом + specular top line
+- Theme.kt: обновлённая палитра — AccentBlue #4E86FF, AppBg #0C0C0E
+- AuthScreen: анимированный фон, пульсирующий логотип, gradient submit кнопка
+- Animation: spring/tween переходы, EaseOutCubic/EaseInCubic easing
+- BUILD SUCCESSFUL — app-debug.apk готов
+
+## Версия 0.9.0 — Android: сборка и исправление ошибок (05.03.2026)
 
 ### Что сделано
 - Исправлен AGP: 8.5.2 → 8.7.3 (поддержка compileSdk 35)
@@ -163,4 +175,5 @@
 | 0.6.2 | 01.03.2026 | Р”РѕРєСѓРјРµРЅС‚Р°С†РёСЏ: СЃРѕР·РґР°РЅ API.md вЂ” РїРѕР»РЅР°СЏ РґРѕРєСѓРјРµРЅС‚Р°С†РёСЏ РІСЃРµС… REST СЌРЅРґРїРѕРёРЅС‚РѕРІ, WebSocket СЃРѕР±С‹С‚РёР№, СЃС…РµРјС‹ Р‘Р” СЃ РїСЂРёРјРµСЂР°РјРё Р·Р°РїСЂРѕСЃРѕРІ Рё РѕС‚РІРµС‚РѕРІ |
 | 0.7.0 | 01.03.2026 | iOS-готовность: DELETE /api/users/me (обязательно для App Store), POST/DELETE /api/users/me/device-token (FCM/APNs push токены), POST /api/messages/:id/read (REST + WS message:read), GET /api/health (детальная проверка БД и Redis), { messages, nextCursor } в ответе истории, модель DeviceToken в БД (миграция 20260301181058) |
 | 0.8.0 | 05.03.2026 | Android: Kotlin + Jetpack Compose РїСЂРёР»РѕР¶РµРЅРёРµ вЂ” Auth, ChatList, Chat, Profile. РЎРµСЂРІРµСЂ h2von.com (HTTPS/WSS). MVVM, OkHttp WebSocket, Retrofit, Coil. Glass morphism UI 1:1 СЃ iOS. |
+
 
